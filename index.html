@@ -14,16 +14,6 @@
       --panel: #ffffff;
       --line: #d9d4cb;
       --active: #f59e0b;
-      /* error type colors */
-      --c-wrong-note: #e74c3c;
-      --c-intonation: #e67e22;
-      --c-note-swap: #9b59b6;
-      --c-skip: #95a5a6;
-      --c-repetition: #3498db;
-      --c-pause: #7f8c8d;
-      --c-tempo-drift: #27ae60;
-      --c-early-late: #f1c40f;
-      --c-stopped-restart: #c0392b;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -35,43 +25,105 @@
       flex-direction: column;
     }
 
-    /* ─── Toolbar ─── */
-    #toolbar {
+    /* ─── Header ─── */
+    #header {
       display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      padding: 8px 12px;
+      align-items: center;
+      padding: 8px 16px;
+      background: #1f2933;
+      color: white;
+      gap: 16px;
+    }
+    #header h1 { font-size: 16px; font-weight: 700; white-space: nowrap; }
+    #header .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-left: auto;
+      font-size: 13px;
+    }
+    #header input[type="text"] {
+      padding: 4px 8px;
+      border: 1px solid #4a5568;
+      border-radius: 4px;
+      background: #2d3748;
+      color: white;
+      font-size: 13px;
+      width: 140px;
+    }
+    #header input[type="text"]::placeholder { color: #a0aec0; }
+
+    /* ─── File Loading Bar ─── */
+    #file-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
       background: var(--panel);
       border-bottom: 1px solid var(--line);
+    }
+    .file-slot {
+      display: flex;
       align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border: 2px dashed var(--line);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s;
+      min-width: 260px;
     }
-    #toolbar .section-label {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--muted);
-      margin-right: 4px;
+    .file-slot:hover { border-color: #4a90d9; background: #f0f7ff; }
+    .file-slot.loaded { border-style: solid; border-color: #27ae60; background: #f0fdf4; }
+    .file-slot .icon { font-size: 22px; }
+    .file-slot .file-info { display: flex; flex-direction: column; }
+    .file-slot .file-label { font-size: 13px; font-weight: 600; color: var(--ink); }
+    .file-slot .file-hint { font-size: 11px; color: var(--muted); }
+    .file-slot .file-name { font-size: 11px; color: #27ae60; font-weight: 600; }
+    .file-slot input[type="file"] { display: none; }
+
+    /* ─── Error Type Toolbar ─── */
+    #error-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      background: #fafaf8;
+      border-bottom: 1px solid var(--line);
+      flex-wrap: wrap;
     }
-    #toolbar .separator {
-      width: 1px;
-      height: 28px;
-      background: var(--line);
-      margin: 0 6px;
+    #error-toolbar .toolbar-label {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink);
+      margin-right: 6px;
     }
     .err-btn {
-      font-size: 11px;
-      padding: 4px 10px;
+      font-size: 12px;
+      padding: 6px 12px;
       border: 2px solid transparent;
-      border-radius: 6px;
+      border-radius: 8px;
       cursor: pointer;
       background: #f0f0f0;
       color: var(--ink);
       transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 4px;
     }
-    .err-btn:hover { filter: brightness(0.93); }
+    .err-btn .key-hint {
+      font-size: 10px;
+      background: rgba(0,0,0,0.08);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-family: monospace;
+    }
+    .err-btn:hover { filter: brightness(0.93); transform: translateY(-1px); }
     .err-btn.active {
       border-color: var(--ink);
       font-weight: 700;
       transform: scale(1.05);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
     .err-btn[data-type="wrong_note"]       { background: #fde8e8; color: #991b1b; }
     .err-btn[data-type="intonation"]       { background: #fef3cd; color: #92400e; }
@@ -82,9 +134,7 @@
     .err-btn[data-type="tempo_drift"]      { background: #d1fae5; color: #065f46; }
     .err-btn[data-type="early_late_entry"] { background: #fef9c3; color: #854d0e; }
     .err-btn[data-type="stopped_restart"]  { background: #fee2e2; color: #7f1d1d; }
-    #btn-cancel { background: #fee2e2; color: #991b1b; font-weight: 600; }
-    .file-input { font-size: 12px; }
-    .file-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+    #btn-cancel { background: #fee2e2; color: #991b1b; font-weight: 600; font-size: 13px; }
 
     /* ─── Main layout ─── */
     #main {
@@ -111,19 +161,36 @@
       z-index: 10;
       background: #fef3c7;
       border: 1px solid #fbbf24;
-      border-radius: 6px;
-      padding: 6px 12px;
-      font-size: 13px;
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 14px;
       font-weight: 600;
       display: none;
       margin-bottom: 8px;
+      text-align: center;
     }
+    /* Empty state */
+    #score-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      min-height: 300px;
+      color: var(--muted);
+      gap: 12px;
+    }
+    #score-empty .empty-icon { font-size: 48px; opacity: 0.4; }
+    #score-empty .empty-title { font-size: 18px; font-weight: 600; }
+    #score-empty .empty-hint { font-size: 14px; max-width: 400px; text-align: center; line-height: 1.5; }
+    #score-empty .empty-steps { text-align: left; font-size: 13px; line-height: 2; }
+    #score-empty .step-num { display: inline-block; width: 24px; height: 24px; border-radius: 50%; background: #e5e7eb; text-align: center; line-height: 24px; font-size: 12px; font-weight: 700; margin-right: 6px; }
 
     /* ─── Audio ─── */
     #audio-area {
       background: var(--panel);
       border-bottom: 1px solid var(--line);
-      padding: 8px 12px;
+      padding: 8px 16px;
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -136,23 +203,23 @@
       font-size: 13px;
     }
     #audio-controls button {
-      padding: 4px 10px;
+      padding: 6px 12px;
       border: 1px solid var(--line);
-      border-radius: 4px;
+      border-radius: 6px;
       background: var(--panel);
       cursor: pointer;
-      font-size: 14px;
+      font-size: 16px;
     }
     #audio-controls button:hover { background: #f0f0f0; }
-    #time-display { color: var(--muted); font-family: monospace; }
-    #speed-select { font-size: 12px; padding: 2px; }
+    #time-display { color: var(--muted); font-family: monospace; font-size: 14px; }
+    #speed-select { font-size: 13px; padding: 4px 6px; border-radius: 4px; border: 1px solid var(--line); }
 
     /* ─── Annotation panel ─── */
     #annotation-area {
       background: var(--panel);
       max-height: 250px;
       overflow: auto;
-      padding: 8px 12px;
+      padding: 8px 16px;
     }
     #annotation-area h3 {
       font-size: 14px;
@@ -165,8 +232,8 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 5px 8px;
-      border-radius: 6px;
+      padding: 6px 10px;
+      border-radius: 8px;
       font-size: 12px;
       margin-bottom: 3px;
       border-left: 4px solid transparent;
@@ -176,30 +243,35 @@
     .ann-loc { color: var(--muted); min-width: 110px; }
     .ann-sev { min-width: 50px; }
     .ann-notes { flex: 1; color: var(--muted); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ann-actions { display: flex; gap: 4px; }
     .ann-actions button {
       font-size: 11px;
-      padding: 2px 6px;
+      padding: 3px 8px;
       border: 1px solid var(--line);
-      border-radius: 3px;
+      border-radius: 4px;
       background: var(--panel);
       cursor: pointer;
     }
-    .ann-actions button:hover { background: #fee2e2; }
+    .ann-actions button:hover { background: #f0f0f0; }
+    .ann-actions button.del-btn:hover { background: #fee2e2; }
+    .export-btns { display: flex; gap: 6px; }
     .export-btns button {
       font-size: 12px;
-      padding: 3px 10px;
+      padding: 4px 12px;
       border: 1px solid var(--line);
-      border-radius: 4px;
+      border-radius: 6px;
       background: #f0fdf4;
       cursor: pointer;
+      font-weight: 500;
     }
+    .export-btns button:hover { background: #d1fae5; }
 
     /* ─── Detail popup ─── */
     #popup-overlay {
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.3);
+      background: rgba(0,0,0,0.4);
       z-index: 100;
       justify-content: center;
       align-items: center;
@@ -207,42 +279,44 @@
     #popup-overlay.visible { display: flex; }
     #popup {
       background: var(--panel);
-      border-radius: 12px;
-      padding: 20px;
-      min-width: 360px;
+      border-radius: 14px;
+      padding: 24px;
+      min-width: 380px;
       max-width: 480px;
-      box-shadow: 0 16px 48px rgba(0,0,0,0.2);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.25);
     }
-    #popup h3 { font-size: 16px; margin-bottom: 12px; }
-    #popup label { display: block; font-size: 13px; margin-bottom: 8px; }
+    #popup h3 { font-size: 18px; margin-bottom: 14px; }
+    #popup label { display: block; font-size: 14px; margin-bottom: 10px; }
     #popup select, #popup input[type="text"] {
-      font-size: 13px;
-      padding: 4px 8px;
+      font-size: 14px;
+      padding: 6px 10px;
       border: 1px solid var(--line);
-      border-radius: 4px;
+      border-radius: 6px;
       margin-left: 4px;
     }
-    #popup .loc-display { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
-    .severity-btns { display: flex; gap: 6px; margin-bottom: 10px; }
+    #popup .loc-display { font-size: 14px; color: var(--muted); margin-bottom: 12px; padding: 8px; background: #f9fafb; border-radius: 6px; }
+    .severity-btns { display: flex; gap: 8px; margin-bottom: 12px; }
     .severity-btns button {
-      padding: 4px 14px;
+      padding: 6px 16px;
       border: 2px solid var(--line);
-      border-radius: 6px;
+      border-radius: 8px;
       cursor: pointer;
       background: var(--panel);
-      font-size: 13px;
+      font-size: 14px;
     }
     .severity-btns button.selected { border-color: var(--ink); background: #fef3c7; font-weight: 700; }
-    #popup .popup-actions { display: flex; gap: 8px; margin-top: 14px; }
+    #popup .popup-actions { display: flex; gap: 10px; margin-top: 16px; }
     #popup .popup-actions button {
-      padding: 6px 18px;
+      padding: 8px 24px;
       border: 1px solid var(--line);
-      border-radius: 6px;
+      border-radius: 8px;
       cursor: pointer;
-      font-size: 13px;
+      font-size: 14px;
     }
     #btn-popup-confirm { background: #065f46; color: white; border: none; font-weight: 600; }
+    #btn-popup-confirm:hover { background: #047857; }
     #btn-popup-cancel { background: var(--panel); }
+    #btn-popup-cancel:hover { background: #f0f0f0; }
 
     /* ─── Keyboard shortcut help ─── */
     #shortcut-help {
@@ -251,41 +325,65 @@
       right: 8px;
       font-size: 11px;
       color: var(--muted);
-      background: rgba(255,255,255,0.9);
-      padding: 6px 10px;
-      border-radius: 6px;
+      background: rgba(255,255,255,0.95);
+      padding: 8px 12px;
+      border-radius: 8px;
       border: 1px solid var(--line);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
     kbd {
       background: #e5e7eb;
-      padding: 1px 5px;
-      border-radius: 3px;
+      padding: 2px 6px;
+      border-radius: 4px;
       font-family: monospace;
       font-size: 11px;
+      border: 1px solid #d1d5db;
     }
   </style>
 </head>
 <body>
 
-<!-- ─── Toolbar ─── -->
-<div id="toolbar">
-  <label class="file-label">Audio (WAV/MP3): <input type="file" id="audio-input" accept=".wav,.mp3,.ogg,.flac" class="file-input"></label>
-  <label class="file-label">Score (MusicXML): <input type="file" id="score-input" accept=".xml,.musicxml,.mxl" class="file-input"></label>
-  <div class="separator"></div>
-  <span class="section-label">Error Type:</span>
-  <button class="err-btn" data-type="wrong_note">Wrong Note</button>
-  <button class="err-btn" data-type="intonation">Intonation</button>
-  <button class="err-btn" data-type="note_swap">Note Swap</button>
-  <button class="err-btn" data-type="skip">Skip</button>
-  <button class="err-btn" data-type="repetition">Repetition</button>
-  <button class="err-btn" data-type="pause">Pause</button>
-  <button class="err-btn" data-type="tempo_drift">Tempo Drift</button>
-  <button class="err-btn" data-type="early_late_entry">Early/Late</button>
-  <button class="err-btn" data-type="stopped_restart">Stop+Restart</button>
-  <button class="err-btn" id="btn-cancel" style="display:none;">✕ Cancel</button>
-  <div class="separator"></div>
-  <span class="section-label">Annotator:</span>
-  <input type="text" id="annotator-name" placeholder="Name" style="font-size:12px; padding:3px 6px; border:1px solid var(--line); border-radius:4px; width:120px;">
+<!-- ─── Header ─── -->
+<div id="header">
+  <h1>Violin Error Annotation Tool</h1>
+  <div class="header-right">
+    <label>Annotator: <input type="text" id="annotator-name" placeholder="Your name"></label>
+  </div>
+</div>
+
+<!-- ─── File Loading Bar ─── -->
+<div id="file-bar">
+  <div class="file-slot" id="audio-slot" onclick="document.getElementById('audio-input').click()">
+    <span class="icon">&#127925;</span>
+    <div class="file-info">
+      <span class="file-label">Student Recording</span>
+      <span class="file-hint" id="audio-hint">Click to load audio file (WAV, MP3, OGG, FLAC)</span>
+    </div>
+    <input type="file" id="audio-input" accept=".wav,.mp3,.ogg,.flac">
+  </div>
+  <div class="file-slot" id="score-slot" onclick="document.getElementById('score-input').click()">
+    <span class="icon">&#119070;</span>
+    <div class="file-info">
+      <span class="file-label">Sheet Music Score</span>
+      <span class="file-hint" id="score-hint">Click to load MusicXML file (.xml, .musicxml, .mxl)</span>
+    </div>
+    <input type="file" id="score-input" accept=".xml,.musicxml,.mxl">
+  </div>
+</div>
+
+<!-- ─── Error Type Toolbar ─── -->
+<div id="error-toolbar">
+  <span class="toolbar-label">Mark Error:</span>
+  <button class="err-btn" data-type="wrong_note"><span class="key-hint">1</span> Wrong Note</button>
+  <button class="err-btn" data-type="intonation"><span class="key-hint">2</span> Intonation</button>
+  <button class="err-btn" data-type="note_swap"><span class="key-hint">3</span> Note Swap</button>
+  <button class="err-btn" data-type="skip"><span class="key-hint">4</span> Skip</button>
+  <button class="err-btn" data-type="repetition"><span class="key-hint">5</span> Repetition</button>
+  <button class="err-btn" data-type="pause"><span class="key-hint">6</span> Pause</button>
+  <button class="err-btn" data-type="tempo_drift"><span class="key-hint">7</span> Tempo Drift</button>
+  <button class="err-btn" data-type="early_late_entry"><span class="key-hint">8</span> Early/Late</button>
+  <button class="err-btn" data-type="stopped_restart"><span class="key-hint">9</span> Stop+Restart</button>
+  <button class="err-btn" id="btn-cancel" style="display:none;">&#x2715; Cancel</button>
 </div>
 
 <!-- ─── Main ─── -->
@@ -293,21 +391,32 @@
   <!-- Score -->
   <div id="score-area">
     <div id="status-bar"></div>
+    <div id="score-empty">
+      <div class="empty-icon">&#119070;</div>
+      <div class="empty-title">Get Started</div>
+      <div class="empty-steps">
+        <div><span class="step-num">1</span> Load a <strong>student recording</strong> (audio file)</div>
+        <div><span class="step-num">2</span> Load the <strong>sheet music</strong> (MusicXML file)</div>
+        <div><span class="step-num">3</span> Listen and <strong>click notes</strong> in the score to mark errors</div>
+        <div><span class="step-num">4</span> <strong>Export</strong> your annotations as CSV or JSON</div>
+      </div>
+      <div class="empty-hint">Use the toolbar above to load files. Your work is auto-saved in the browser.</div>
+    </div>
     <div id="scoreHost"></div>
   </div>
   <!-- Audio -->
   <div id="audio-area">
     <div id="waveform"></div>
     <div id="audio-controls">
-      <button id="btn-back" title="Back 5s">⏪</button>
-      <button id="btn-play" title="Play/Pause (Space)">▶</button>
-      <button id="btn-fwd" title="Forward 5s">⏩</button>
+      <button id="btn-back" title="Back 5s (Left Arrow)">&#x23EA;</button>
+      <button id="btn-play" title="Play/Pause (Space)">&#x25B6;</button>
+      <button id="btn-fwd" title="Forward 5s (Right Arrow)">&#x23E9;</button>
       <span id="time-display">00:00.0 / 00:00.0</span>
       <label>Speed: <select id="speed-select">
         <option value="0.25">0.25x</option>
-        <option value="0.5">0.5x</option>
+        <option value="0.5">0.5x (slow)</option>
         <option value="0.75">0.75x</option>
-        <option value="1" selected>1x</option>
+        <option value="1" selected>1x (normal)</option>
         <option value="1.25">1.25x</option>
         <option value="1.5">1.5x</option>
       </select></label>
@@ -318,9 +427,9 @@
     <h3>
       Annotations (<span id="ann-count">0</span>)
       <span class="export-btns">
-        <button id="btn-export-csv">Export CSV</button>
-        <button id="btn-export-json">Export JSON</button>
-        <button id="btn-import">Import</button>
+        <button id="btn-export-csv" title="Download annotations as CSV">Export CSV</button>
+        <button id="btn-export-json" title="Download annotations as JSON">Export JSON</button>
+        <button id="btn-import" title="Load previously saved annotations">Import</button>
         <input type="file" id="import-input" accept=".csv,.json" style="display:none">
       </span>
     </h3>
@@ -445,7 +554,12 @@ function initAudio(file) {
 }
 
 document.getElementById('audio-input').addEventListener('change', (e) => {
-  if (e.target.files[0]) initAudio(e.target.files[0]);
+  if (e.target.files[0]) {
+    initAudio(e.target.files[0]);
+    const slot = document.getElementById('audio-slot');
+    slot.classList.add('loaded');
+    document.getElementById('audio-hint').innerHTML = `<span class="file-name">Loaded: ${escHtml(e.target.files[0].name)}</span>`;
+  }
 });
 
 document.getElementById('btn-play').onclick = () => S.wavesurfer?.playPause();
@@ -576,7 +690,13 @@ function buildNoteIndex() {
 }
 
 document.getElementById('score-input').addEventListener('change', async (e) => {
-  if (e.target.files[0]) await initScore(e.target.files[0]);
+  if (e.target.files[0]) {
+    document.getElementById('score-empty').style.display = 'none';
+    await initScore(e.target.files[0]);
+    const slot = document.getElementById('score-slot');
+    slot.classList.add('loaded');
+    document.getElementById('score-hint').innerHTML = `<span class="file-name">Loaded: ${escHtml(e.target.files[0].name)} (${S.noteIndex.length} notes)</span>`;
+  }
 });
 
 // ═══════════════════════════════════════════════════════
@@ -845,7 +965,7 @@ function renderAnnotationList() {
       <span class="ann-notes">${escHtml(ann.notes || '')}</span>
       <span class="ann-actions">
         <button onclick="editAnnotation(${ann.id})">Edit</button>
-        <button onclick="deleteAnnotation(${ann.id})">Delete</button>
+        <button class="del-btn" onclick="deleteAnnotation(${ann.id})">Delete</button>
       </span>
     </div>`;
   }).join('');
