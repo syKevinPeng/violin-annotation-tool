@@ -84,6 +84,7 @@
     .err-btn[data-type="stopped_restart"]  { background: #fee2e2; color: #7f1d1d; }
     #btn-cancel { background: #fee2e2; color: #991b1b; font-weight: 600; }
     .file-input { font-size: 12px; }
+    .file-label { font-size: 12px; font-weight: 600; color: var(--muted); }
 
     /* ─── Main layout ─── */
     #main {
@@ -268,9 +269,8 @@
 
 <!-- ─── Toolbar ─── -->
 <div id="toolbar">
-  <span class="section-label">Files:</span>
-  <input type="file" id="audio-input" accept=".wav,.mp3,.ogg,.flac" class="file-input">
-  <input type="file" id="score-input" accept=".xml,.musicxml,.mxl" class="file-input">
+  <label class="file-label">Audio (WAV/MP3): <input type="file" id="audio-input" accept=".wav,.mp3,.ogg,.flac" class="file-input"></label>
+  <label class="file-label">Score (MusicXML): <input type="file" id="score-input" accept=".xml,.musicxml,.mxl" class="file-input"></label>
   <div class="separator"></div>
   <span class="section-label">Error Type:</span>
   <button class="err-btn" data-type="wrong_note">Wrong Note</button>
