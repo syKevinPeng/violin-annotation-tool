@@ -1,0 +1,1205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Violin Error Annotation Tool</title>
+  <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.9.2/build/opensheetmusicdisplay.min.js"></script>
+  <script src="https://unpkg.com/wavesurfer.js@7"></script>
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --ink: #1f2933;
+      --muted: #65707a;
+      --panel: #ffffff;
+      --line: #d9d4cb;
+      --active: #f59e0b;
+      /* error type colors */
+      --c-wrong-note: #e74c3c;
+      --c-intonation: #e67e22;
+      --c-note-swap: #9b59b6;
+      --c-skip: #95a5a6;
+      --c-repetition: #3498db;
+      --c-pause: #7f8c8d;
+      --c-tempo-drift: #27ae60;
+      --c-early-late: #f1c40f;
+      --c-stopped-restart: #c0392b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ─── Toolbar ─── */
+    #toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 12px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      align-items: center;
+    }
+    #toolbar .section-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-right: 4px;
+    }
+    #toolbar .separator {
+      width: 1px;
+      height: 28px;
+      background: var(--line);
+      margin: 0 6px;
+    }
+    .err-btn {
+      font-size: 11px;
+      padding: 4px 10px;
+      border: 2px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      background: #f0f0f0;
+      color: var(--ink);
+      transition: all 0.15s;
+    }
+    .err-btn:hover { filter: brightness(0.93); }
+    .err-btn.active {
+      border-color: var(--ink);
+      font-weight: 700;
+      transform: scale(1.05);
+    }
+    .err-btn[data-type="wrong_note"]       { background: #fde8e8; color: #991b1b; }
+    .err-btn[data-type="intonation"]       { background: #fef3cd; color: #92400e; }
+    .err-btn[data-type="note_swap"]        { background: #ede9fe; color: #5b21b6; }
+    .err-btn[data-type="skip"]             { background: #e5e7eb; color: #374151; }
+    .err-btn[data-type="repetition"]       { background: #dbeafe; color: #1e40af; }
+    .err-btn[data-type="pause"]            { background: #e5e7eb; color: #4b5563; }
+    .err-btn[data-type="tempo_drift"]      { background: #d1fae5; color: #065f46; }
+    .err-btn[data-type="early_late_entry"] { background: #fef9c3; color: #854d0e; }
+    .err-btn[data-type="stopped_restart"]  { background: #fee2e2; color: #7f1d1d; }
+    #btn-cancel { background: #fee2e2; color: #991b1b; font-weight: 600; }
+    .file-input { font-size: 12px; }
+
+    /* ─── Main layout ─── */
+    #main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr;
+      grid-template-rows: 1fr 100px auto;
+      overflow: hidden;
+    }
+
+    /* ─── Score ─── */
+    #score-area {
+      overflow: auto;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 10px;
+      position: relative;
+    }
+    #scoreHost { min-height: 200px; }
+    #score-area.selecting { cursor: crosshair; }
+    #status-bar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: #fef3c7;
+      border: 1px solid #fbbf24;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      display: none;
+      margin-bottom: 8px;
+    }
+
+    /* ─── Audio ─── */
+    #audio-area {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    #waveform { width: 100%; height: 60px; }
+    #audio-controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 13px;
+    }
+    #audio-controls button {
+      padding: 4px 10px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel);
+      cursor: pointer;
+      font-size: 14px;
+    }
+    #audio-controls button:hover { background: #f0f0f0; }
+    #time-display { color: var(--muted); font-family: monospace; }
+    #speed-select { font-size: 12px; padding: 2px; }
+
+    /* ─── Annotation panel ─── */
+    #annotation-area {
+      background: var(--panel);
+      max-height: 250px;
+      overflow: auto;
+      padding: 8px 12px;
+    }
+    #annotation-area h3 {
+      font-size: 14px;
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .ann-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-bottom: 3px;
+      border-left: 4px solid transparent;
+    }
+    .ann-item:hover { background: #f9fafb; }
+    .ann-type { font-weight: 600; min-width: 100px; }
+    .ann-loc { color: var(--muted); min-width: 110px; }
+    .ann-sev { min-width: 50px; }
+    .ann-notes { flex: 1; color: var(--muted); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ann-actions button {
+      font-size: 11px;
+      padding: 2px 6px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: var(--panel);
+      cursor: pointer;
+    }
+    .ann-actions button:hover { background: #fee2e2; }
+    .export-btns button {
+      font-size: 12px;
+      padding: 3px 10px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: #f0fdf4;
+      cursor: pointer;
+    }
+
+    /* ─── Detail popup ─── */
+    #popup-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.3);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    #popup-overlay.visible { display: flex; }
+    #popup {
+      background: var(--panel);
+      border-radius: 12px;
+      padding: 20px;
+      min-width: 360px;
+      max-width: 480px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.2);
+    }
+    #popup h3 { font-size: 16px; margin-bottom: 12px; }
+    #popup label { display: block; font-size: 13px; margin-bottom: 8px; }
+    #popup select, #popup input[type="text"] {
+      font-size: 13px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      margin-left: 4px;
+    }
+    #popup .loc-display { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+    .severity-btns { display: flex; gap: 6px; margin-bottom: 10px; }
+    .severity-btns button {
+      padding: 4px 14px;
+      border: 2px solid var(--line);
+      border-radius: 6px;
+      cursor: pointer;
+      background: var(--panel);
+      font-size: 13px;
+    }
+    .severity-btns button.selected { border-color: var(--ink); background: #fef3c7; font-weight: 700; }
+    #popup .popup-actions { display: flex; gap: 8px; margin-top: 14px; }
+    #popup .popup-actions button {
+      padding: 6px 18px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    #btn-popup-confirm { background: #065f46; color: white; border: none; font-weight: 600; }
+    #btn-popup-cancel { background: var(--panel); }
+
+    /* ─── Keyboard shortcut help ─── */
+    #shortcut-help {
+      position: fixed;
+      bottom: 8px;
+      right: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      background: rgba(255,255,255,0.9);
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+    }
+    kbd {
+      background: #e5e7eb;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ─── Toolbar ─── -->
+<div id="toolbar">
+  <span class="section-label">Files:</span>
+  <input type="file" id="audio-input" accept=".wav,.mp3,.ogg,.flac" class="file-input">
+  <input type="file" id="score-input" accept=".xml,.musicxml,.mxl" class="file-input">
+  <div class="separator"></div>
+  <span class="section-label">Error Type:</span>
+  <button class="err-btn" data-type="wrong_note">Wrong Note</button>
+  <button class="err-btn" data-type="intonation">Intonation</button>
+  <button class="err-btn" data-type="note_swap">Note Swap</button>
+  <button class="err-btn" data-type="skip">Skip</button>
+  <button class="err-btn" data-type="repetition">Repetition</button>
+  <button class="err-btn" data-type="pause">Pause</button>
+  <button class="err-btn" data-type="tempo_drift">Tempo Drift</button>
+  <button class="err-btn" data-type="early_late_entry">Early/Late</button>
+  <button class="err-btn" data-type="stopped_restart">Stop+Restart</button>
+  <button class="err-btn" id="btn-cancel" style="display:none;">✕ Cancel</button>
+  <div class="separator"></div>
+  <span class="section-label">Annotator:</span>
+  <input type="text" id="annotator-name" placeholder="Name" style="font-size:12px; padding:3px 6px; border:1px solid var(--line); border-radius:4px; width:120px;">
+</div>
+
+<!-- ─── Main ─── -->
+<div id="main">
+  <!-- Score -->
+  <div id="score-area">
+    <div id="status-bar"></div>
+    <div id="scoreHost"></div>
+  </div>
+  <!-- Audio -->
+  <div id="audio-area">
+    <div id="waveform"></div>
+    <div id="audio-controls">
+      <button id="btn-back" title="Back 5s">⏪</button>
+      <button id="btn-play" title="Play/Pause (Space)">▶</button>
+      <button id="btn-fwd" title="Forward 5s">⏩</button>
+      <span id="time-display">00:00.0 / 00:00.0</span>
+      <label>Speed: <select id="speed-select">
+        <option value="0.25">0.25x</option>
+        <option value="0.5">0.5x</option>
+        <option value="0.75">0.75x</option>
+        <option value="1" selected>1x</option>
+        <option value="1.25">1.25x</option>
+        <option value="1.5">1.5x</option>
+      </select></label>
+    </div>
+  </div>
+  <!-- Annotations -->
+  <div id="annotation-area">
+    <h3>
+      Annotations (<span id="ann-count">0</span>)
+      <span class="export-btns">
+        <button id="btn-export-csv">Export CSV</button>
+        <button id="btn-export-json">Export JSON</button>
+        <button id="btn-import">Import</button>
+        <input type="file" id="import-input" accept=".csv,.json" style="display:none">
+      </span>
+    </h3>
+    <div id="ann-list"></div>
+  </div>
+</div>
+
+<!-- ─── Detail Popup ─── -->
+<div id="popup-overlay">
+  <div id="popup">
+    <h3 id="popup-title"></h3>
+    <div id="popup-loc" class="loc-display"></div>
+    <div id="popup-fields"></div>
+    <label>Severity:
+      <span class="severity-btns">
+        <button data-sev="1">1 Mild</button>
+        <button data-sev="2" class="selected">2 Moderate</button>
+        <button data-sev="3">3 Severe</button>
+      </span>
+    </label>
+    <label>Notes: <input type="text" id="popup-notes" placeholder="Optional description" style="width:100%"></label>
+    <div class="popup-actions">
+      <button id="btn-popup-confirm">Confirm</button>
+      <button id="btn-popup-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Shortcut help ─── -->
+<div id="shortcut-help">
+  <kbd>Space</kbd> Play/Pause &nbsp;
+  <kbd>←</kbd><kbd>→</kbd> Skip 2s &nbsp;
+  <kbd>[</kbd><kbd>]</kbd> Speed &nbsp;
+  <kbd>Esc</kbd> Cancel &nbsp;
+  <kbd>1</kbd>-<kbd>9</kbd> Error types
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════
+const S = {
+  mode: null,           // null | 'select_start' | 'select_end' | 'popup'
+  currentType: null,
+  startIdx: null,
+  endIdx: null,
+  annotations: [],
+  noteIndex: [],        // [{globalIndex, measure, beat, measureBeat, pitch, svgEl}]
+  osmd: null,
+  wavesurfer: null,
+  audioFilename: '',
+  scoreFilename: '',
+};
+
+const TYPE_META = {
+  wrong_note:       { label: 'Wrong Note',     clicks: 1, color: '#e74c3c' },
+  intonation:       { label: 'Intonation',     clicks: 2, color: '#e67e22' },
+  note_swap:        { label: 'Note Swap',      clicks: 2, color: '#9b59b6' },
+  skip:             { label: 'Skip',           clicks: 2, color: '#95a5a6' },
+  repetition:       { label: 'Repetition',     clicks: 2, color: '#3498db' },
+  pause:            { label: 'Pause',          clicks: 1, color: '#7f8c8d' },
+  tempo_drift:      { label: 'Tempo Drift',    clicks: 2, color: '#27ae60' },
+  early_late_entry: { label: 'Early/Late',     clicks: 2, color: '#f1c40f' },
+  stopped_restart:  { label: 'Stop+Restart',   clicks: 2, color: '#c0392b' },
+};
+
+const ERROR_TYPES_ORDERED = [
+  'wrong_note','intonation','note_swap','skip','repetition',
+  'pause','tempo_drift','early_late_entry','stopped_restart'
+];
+
+// ═══════════════════════════════════════════════════════
+// Utilities
+// ═══════════════════════════════════════════════════════
+function escHtml(s) {
+  const el = document.createElement('span');
+  el.textContent = s;
+  return el.innerHTML;
+}
+
+function fmtTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec - 60 * m;
+  return `${String(m).padStart(2,'0')}:${s.toFixed(1).padStart(4,'0')}`;
+}
+
+function showStatus(msg) {
+  const el = document.getElementById('status-bar');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+// ═══════════════════════════════════════════════════════
+// Audio (wavesurfer)
+// ═══════════════════════════════════════════════════════
+function initAudio(file) {
+  if (S.wavesurfer) S.wavesurfer.destroy();
+  if (S._audioBlobUrl) URL.revokeObjectURL(S._audioBlobUrl);
+  const url = URL.createObjectURL(file);
+  S._audioBlobUrl = url;
+  S.audioFilename = file.name;
+
+  S.wavesurfer = WaveSurfer.create({
+    container: '#waveform',
+    waveColor: '#4a90d9',
+    progressColor: '#1a5276',
+    cursorColor: '#e74c3c',
+    height: 60,
+    normalize: true,
+    barWidth: 2,
+    barGap: 1,
+    url: url,
+  });
+
+  S.wavesurfer.on('timeupdate', (t) => {
+    const dur = S.wavesurfer.getDuration() || 0;
+    document.getElementById('time-display').textContent = `${fmtTime(t)} / ${fmtTime(dur)}`;
+  });
+
+  S.wavesurfer.on('play', () => { document.getElementById('btn-play').textContent = '⏸'; });
+  S.wavesurfer.on('pause', () => { document.getElementById('btn-play').textContent = '▶'; });
+}
+
+document.getElementById('audio-input').addEventListener('change', (e) => {
+  if (e.target.files[0]) initAudio(e.target.files[0]);
+});
+
+document.getElementById('btn-play').onclick = () => S.wavesurfer?.playPause();
+document.getElementById('btn-back').onclick = () => S.wavesurfer?.skip(-5);
+document.getElementById('btn-fwd').onclick = () => S.wavesurfer?.skip(5);
+document.getElementById('speed-select').onchange = (e) => {
+  S.wavesurfer?.setPlaybackRate(parseFloat(e.target.value));
+};
+
+// ═══════════════════════════════════════════════════════
+// Score (OSMD)
+// ═══════════════════════════════════════════════════════
+async function initScore(file) {
+  S.scoreFilename = file.name;
+  const text = await file.text();
+
+  const host = document.getElementById('scoreHost');
+  host.innerHTML = '';
+
+  S.osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(host, {
+    autoResize: false,
+    backend: 'svg',
+    drawTitle: true,
+    drawSubtitle: false,
+    drawComposer: true,
+  });
+
+  await S.osmd.load(text);
+  S.osmd.render();
+  buildNoteIndex();
+}
+
+function buildNoteIndex() {
+  S.noteIndex = [];
+  const osmd = S.osmd;
+  if (!osmd) return;
+
+  let globalIdx = 0;
+
+  // Walk through OSMD's graphic representation to get SVG elements
+  for (const measureList of osmd.GraphicSheet.MeasureList) {
+    for (const staffMeasure of measureList) {
+      if (!staffMeasure) continue;
+      for (const staffEntry of staffMeasure.staffEntries) {
+        if (!staffEntry) continue;
+        for (const gve of staffEntry.graphicalVoiceEntries) {
+          if (!gve) continue;
+          for (const gNote of gve.notes) {
+            if (!gNote || !gNote.sourceNote || gNote.sourceNote.isRestFlag) continue;
+
+            const sn = gNote.sourceNote;
+            const measureNum = sn.sourceMeasure
+              ? sn.sourceMeasure.MeasureNumber
+              : 0;
+
+            // Beat: derive from time signature
+            let beat = 1;
+            try {
+              const ts = sn.getAbsoluteTimestamp();
+              const measureStart = sn.sourceMeasure
+                ? sn.sourceMeasure.AbsoluteTimestamp.RealValue
+                : 0;
+              let beatsPerMeasure = 4;
+              try {
+                const timeSig = sn.sourceMeasure?.ActiveTimeSignature;
+                if (timeSig) beatsPerMeasure = timeSig.Numerator || 4;
+              } catch(e2) {}
+              const relPos = ts.RealValue - measureStart;
+              beat = Math.floor(relPos * beatsPerMeasure) + 1;
+            } catch(e) {}
+
+            let pitchStr = '?';
+            let midiPitch = 0;
+            if (sn.Pitch) {
+              const p = sn.Pitch;
+              const noteNames = ['C','D','E','F','G','A','B'];
+              pitchStr = noteNames[p.FundamentalNote] + (p.Accidental > 0 ? '#' : p.Accidental < 0 ? 'b' : '') + p.Octave;
+              midiPitch = p.getHalfTone() + 12;
+            }
+
+            // Get the SVG element
+            let svgEl = null;
+            try {
+              svgEl = gNote.getSVGGElement ? gNote.getSVGGElement() : null;
+            } catch(e) {}
+            if (!svgEl) {
+              try {
+                svgEl = gNote.vfStaveNote?.getSVGElement?.() || null;
+              } catch(e) {}
+            }
+
+            const noteData = {
+              globalIndex: globalIdx,
+              measure: measureNum,
+              beat: beat,
+              measureBeat: `${measureNum}.${beat}`,
+              pitch: pitchStr,
+              midiPitch: midiPitch,
+              svgEl: svgEl,
+            };
+            S.noteIndex.push(noteData);
+
+            // Make clickable
+            if (svgEl) {
+              svgEl.style.cursor = 'pointer';
+              const idx = globalIdx;
+              svgEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+                onNoteClicked(idx);
+              });
+            }
+
+            globalIdx++;
+          }
+        }
+      }
+    }
+  }
+
+  const linked = S.noteIndex.filter(n => n.svgEl).length;
+  const total = S.noteIndex.length;
+  console.log(`Built note index: ${total} notes, ${linked} clickable`);
+  if (total > 0 && linked / total < 0.5) {
+    alert(`Warning: Only ${linked} of ${total} notes could be linked to the rendered score. Clicking may not work correctly. Try a different MusicXML file or OSMD version.`);
+  } else if (total > 0 && linked < total) {
+    console.warn(`${total - linked} notes could not be linked to SVG elements`);
+  }
+}
+
+document.getElementById('score-input').addEventListener('change', async (e) => {
+  if (e.target.files[0]) await initScore(e.target.files[0]);
+});
+
+// ═══════════════════════════════════════════════════════
+// Annotation Mode
+// ═══════════════════════════════════════════════════════
+
+// Error type buttons
+document.querySelectorAll('.err-btn[data-type]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const type = btn.dataset.type;
+    enterAnnotationMode(type);
+  });
+});
+
+document.getElementById('btn-cancel').onclick = () => cancelAnnotation();
+
+function enterAnnotationMode(type) {
+  S.currentType = type;
+  S.startIdx = null;
+  S.endIdx = null;
+  S.mode = 'select_start';
+
+  // Update UI
+  document.querySelectorAll('.err-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.err-btn[data-type="${type}"]`).classList.add('active');
+  document.getElementById('btn-cancel').style.display = 'inline-block';
+  document.getElementById('score-area').classList.add('selecting');
+
+  const meta = TYPE_META[type];
+  if (meta.clicks === 1) {
+    showStatus(`Click the note for: ${meta.label}`);
+  } else {
+    showStatus(`Click the START note for: ${meta.label}`);
+  }
+}
+
+function cancelAnnotation() {
+  S.mode = null;
+  S.currentType = null;
+  S.startIdx = null;
+  S.endIdx = null;
+  document.querySelectorAll('.err-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-cancel').style.display = 'none';
+  document.getElementById('score-area').classList.remove('selecting');
+  document.getElementById('popup-overlay').classList.remove('visible');
+  showStatus('');
+  clearTempHighlights();
+}
+
+function onNoteClicked(idx) {
+  if (!S.mode || S.mode === 'popup') return;
+
+  const meta = TYPE_META[S.currentType];
+
+  if (S.mode === 'select_start') {
+    S.startIdx = idx;
+    highlightNoteTemp(idx, meta.color);
+
+    if (meta.clicks === 1) {
+      S.endIdx = idx;
+      S.mode = 'popup';
+      showDetailPopup();
+    } else {
+      S.mode = 'select_end';
+      if (S.currentType === 'stopped_restart') {
+        showStatus(`Click where the performer RESTARTED FROM`);
+      } else {
+        showStatus(`Click the END note for: ${meta.label}`);
+      }
+    }
+  } else if (S.mode === 'select_end') {
+    S.endIdx = idx;
+
+    // For most types, ensure start <= end
+    if (S.currentType !== 'stopped_restart' && S.startIdx > S.endIdx) {
+      [S.startIdx, S.endIdx] = [S.endIdx, S.startIdx];
+    }
+
+    highlightRangeTemp(S.startIdx, S.endIdx, meta.color);
+    S.mode = 'popup';
+    showDetailPopup();
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// Detail Popup
+// ═══════════════════════════════════════════════════════
+function showDetailPopup() {
+  const type = S.currentType;
+  const meta = TYPE_META[type];
+  const startNote = S.noteIndex[S.startIdx];
+  const endNote = S.noteIndex[S.endIdx];
+
+  document.getElementById('popup-title').textContent = meta.label;
+
+  let locText = `Location: ${startNote.measureBeat} (${startNote.pitch})`;
+  if (S.startIdx !== S.endIdx) {
+    locText = `From: ${startNote.measureBeat} (${startNote.pitch})  →  To: ${endNote.measureBeat} (${endNote.pitch})`;
+  }
+  document.getElementById('popup-loc').textContent = locText;
+
+  // Build type-specific fields
+  const fieldsDiv = document.getElementById('popup-fields');
+  fieldsDiv.innerHTML = buildTypeFields(type, startNote, endNote);
+
+  // Reset severity
+  document.querySelectorAll('.severity-btns button').forEach(b => {
+    b.classList.toggle('selected', b.dataset.sev === '2');
+  });
+  document.getElementById('popup-notes').value = '';
+
+  document.getElementById('popup-overlay').classList.add('visible');
+
+  // Focus notes input
+  setTimeout(() => document.getElementById('popup-notes').focus(), 100);
+}
+
+function buildTypeFields(type, startNote, endNote) {
+  switch(type) {
+    case 'wrong_note':
+      return `
+        <label>Expected: <strong>${startNote.pitch}</strong> (from score)</label>
+        <label>Played: <input type="text" id="f-played-pitch" placeholder="e.g. F#4" style="width:80px"></label>`;
+    case 'intonation':
+      return `
+        <label>Direction: <select id="f-direction">
+          <option value="sharp">Sharp (too high)</option>
+          <option value="flat">Flat (too low)</option>
+          <option value="unstable">Unstable</option>
+        </select></label>
+        <label>Degree: <select id="f-degree">
+          <option value="slightly">Slightly</option>
+          <option value="noticeably" selected>Noticeably</option>
+          <option value="severely">Severely</option>
+        </select></label>`;
+    case 'note_swap':
+      return `<p>Note A: <strong>${startNote.pitch}</strong> at ${startNote.measureBeat}<br>
+              Note B: <strong>${endNote.pitch}</strong> at ${endNote.measureBeat}<br>
+              These were played in reversed order.</p>`;
+    case 'skip':
+      const n = S.endIdx - S.startIdx + 1;
+      return `<p>Skipped <strong>${n}</strong> note(s)</p>`;
+    case 'repetition':
+      return `<label>Times played: <select id="f-times">
+          <option value="2" selected>2 (repeated once)</option>
+          <option value="3">3 (repeated twice)</option>
+          <option value="4">4+</option>
+        </select></label>`;
+    case 'pause':
+      return `<p>Pause after: <strong>${startNote.pitch}</strong> at ${startNote.measureBeat}</p>
+        <label>Duration: <select id="f-pause-dur">
+          <option value="short">Short (&lt;1s)</option>
+          <option value="medium" selected>Medium (1-3s)</option>
+          <option value="long">Long (&gt;3s)</option>
+        </select></label>`;
+    case 'tempo_drift':
+      return `
+        <label>Direction: <select id="f-drift-dir">
+          <option value="rushing">Rushing (speeding up)</option>
+          <option value="dragging">Dragging (slowing down)</option>
+        </select></label>
+        <label>Degree: <select id="f-drift-deg">
+          <option value="slight">Slight</option>
+          <option value="moderate" selected>Moderate</option>
+          <option value="severe">Severe</option>
+        </select></label>`;
+    case 'early_late_entry':
+      return `
+        <label>Direction: <select id="f-entry-dir">
+          <option value="early">Early</option>
+          <option value="late" selected>Late</option>
+        </select></label>
+        <label>Amount: <select id="f-entry-amt">
+          <option value="slight">Slight (&lt;0.2s)</option>
+          <option value="moderate" selected>Moderate (0.2-0.5s)</option>
+          <option value="large">Large (&gt;0.5s)</option>
+        </select></label>`;
+    case 'stopped_restart':
+      return `<p>Stopped at: <strong>${startNote.measureBeat}</strong><br>
+              Restarted from: <strong>${endNote.measureBeat}</strong></p>
+        <label>Pause: <select id="f-sr-pause">
+          <option value="short">Short (&lt;1s)</option>
+          <option value="medium" selected>Medium (1-3s)</option>
+          <option value="long">Long (&gt;3s)</option>
+        </select></label>`;
+    default:
+      return '';
+  }
+}
+
+// Severity buttons
+document.querySelectorAll('.severity-btns button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.severity-btns button').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+  });
+});
+
+// Confirm
+document.getElementById('btn-popup-confirm').onclick = () => {
+  const severity = parseInt(document.querySelector('.severity-btns button.selected')?.dataset.sev || '2');
+  const notes = document.getElementById('popup-notes').value;
+
+  const ann = {
+    id: Date.now(),
+    type: S.currentType,
+    startIdx: S.startIdx,
+    endIdx: S.endIdx,
+    startMeasureBeat: S.noteIndex[S.startIdx].measureBeat,
+    endMeasureBeat: S.noteIndex[S.endIdx].measureBeat,
+    startPitch: S.noteIndex[S.startIdx].pitch,
+    endPitch: S.noteIndex[S.endIdx].pitch,
+    severity: severity,
+    notes: notes,
+    extra: collectExtraFields(S.currentType),
+  };
+
+  S.annotations.push(ann);
+  document.getElementById('popup-overlay').classList.remove('visible');
+  cancelAnnotation();
+  renderAnnotationList();
+  renderAllHighlights();
+  saveToLocalStorage();
+};
+
+document.getElementById('btn-popup-cancel').onclick = () => {
+  document.getElementById('popup-overlay').classList.remove('visible');
+  cancelAnnotation();
+};
+
+function collectExtraFields(type) {
+  const g = (id) => document.getElementById(id)?.value || '';
+  switch(type) {
+    case 'wrong_note': return { played_pitch: g('f-played-pitch') };
+    case 'intonation': return { direction: g('f-direction'), degree: g('f-degree') };
+    case 'repetition': return { times_played: g('f-times') };
+    case 'pause': return { duration: g('f-pause-dur') };
+    case 'tempo_drift': return { direction: g('f-drift-dir'), degree: g('f-drift-deg') };
+    case 'early_late_entry': return { direction: g('f-entry-dir'), amount: g('f-entry-amt') };
+    case 'stopped_restart': return { pause_duration: g('f-sr-pause') };
+    default: return {};
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// Annotation List
+// ═══════════════════════════════════════════════════════
+function renderAnnotationList() {
+  document.getElementById('ann-count').textContent = S.annotations.length;
+  const list = document.getElementById('ann-list');
+
+  if (S.annotations.length === 0) {
+    list.innerHTML = '<p style="color:var(--muted); font-size:13px; padding:8px;">No annotations yet. Select an error type and click notes in the score.</p>';
+    return;
+  }
+
+  list.innerHTML = S.annotations.map((ann, i) => {
+    const meta = TYPE_META[ann.type];
+    const loc = ann.startIdx === ann.endIdx
+      ? escHtml(ann.startMeasureBeat)
+      : `${escHtml(ann.startMeasureBeat)} → ${escHtml(ann.endMeasureBeat)}`;
+    return `<div class="ann-item" style="border-left-color:${meta.color}">
+      <span class="ann-type" style="color:${meta.color}">${escHtml(meta.label)}</span>
+      <span class="ann-loc">${loc}</span>
+      <span class="ann-sev">sev=${ann.severity}</span>
+      <span class="ann-notes">${escHtml(ann.notes || '')}</span>
+      <span class="ann-actions">
+        <button onclick="editAnnotation(${ann.id})">Edit</button>
+        <button onclick="deleteAnnotation(${ann.id})">Delete</button>
+      </span>
+    </div>`;
+  }).join('');
+}
+
+window.deleteAnnotation = function(id) {
+  if (!confirm('Delete this annotation?')) return;
+  S.annotations = S.annotations.filter(a => a.id !== id);
+  renderAnnotationList();
+  renderAllHighlights();
+  saveToLocalStorage();
+};
+
+window.editAnnotation = function(id) {
+  const ann = S.annotations.find(a => a.id === id);
+  if (!ann) return;
+
+  // Set up state as if we just selected the notes
+  S.currentType = ann.type;
+  S.startIdx = ann.startIdx;
+  S.endIdx = ann.endIdx;
+  S.mode = 'popup';
+
+  // Show popup with existing values
+  showDetailPopup();
+
+  // Pre-fill existing values after popup renders
+  setTimeout(() => {
+    document.getElementById('popup-notes').value = ann.notes || '';
+    document.querySelectorAll('.severity-btns button').forEach(b => {
+      b.classList.toggle('selected', b.dataset.sev === String(ann.severity));
+    });
+    // Pre-fill type-specific fields
+    const extra = ann.extra || {};
+    for (const [key, val] of Object.entries(extra)) {
+      const el = document.getElementById('f-' + key.replace(/_/g, '-'));
+      if (el) el.value = val;
+      // Also try without f- prefix mapping
+      const mappings = {
+        played_pitch: 'f-played-pitch', direction: 'f-direction', degree: 'f-degree',
+        times_played: 'f-times', duration: 'f-pause-dur', pause_duration: 'f-sr-pause',
+        amount: 'f-entry-amt',
+      };
+      if (mappings[key]) {
+        const mapped = document.getElementById(mappings[key]);
+        if (mapped) mapped.value = val;
+      }
+    }
+    // Also try drift-specific fields
+    if (extra.direction && ann.type === 'tempo_drift') {
+      const el = document.getElementById('f-drift-dir');
+      if (el) el.value = extra.direction;
+    }
+    if (extra.degree && ann.type === 'tempo_drift') {
+      const el = document.getElementById('f-drift-deg');
+      if (el) el.value = extra.degree;
+    }
+    if (extra.direction && ann.type === 'early_late_entry') {
+      const el = document.getElementById('f-entry-dir');
+      if (el) el.value = extra.direction;
+    }
+  }, 50);
+
+  // Override confirm to update instead of create
+  const origConfirm = document.getElementById('btn-popup-confirm').onclick;
+  document.getElementById('btn-popup-confirm').onclick = () => {
+    const severity = parseInt(document.querySelector('.severity-btns button.selected')?.dataset.sev || '2');
+    ann.severity = severity;
+    ann.notes = document.getElementById('popup-notes').value;
+    ann.extra = collectExtraFields(ann.type);
+    document.getElementById('popup-overlay').classList.remove('visible');
+    cancelAnnotation();
+    renderAnnotationList();
+    renderAllHighlights();
+    saveToLocalStorage();
+    // Restore original confirm handler
+    document.getElementById('btn-popup-confirm').onclick = origConfirm;
+  };
+};
+
+// ═══════════════════════════════════════════════════════
+// Score Highlighting
+// ═══════════════════════════════════════════════════════
+function clearAllHighlights() {
+  document.querySelectorAll('.ann-highlight').forEach(el => el.remove());
+}
+
+function clearTempHighlights() {
+  document.querySelectorAll('.temp-highlight').forEach(el => el.remove());
+}
+
+function highlightNoteTemp(idx, color) {
+  const note = S.noteIndex[idx];
+  if (!note?.svgEl) return;
+  addHighlightRect(note.svgEl, color, 0.3, 'temp-highlight');
+}
+
+function highlightRangeTemp(startIdx, endIdx, color) {
+  clearTempHighlights();
+  const lo = Math.min(startIdx, endIdx);
+  const hi = Math.max(startIdx, endIdx);
+  for (let i = lo; i <= hi; i++) {
+    highlightNoteTemp(i, color);
+  }
+}
+
+function renderAllHighlights() {
+  clearAllHighlights();
+  for (const ann of S.annotations) {
+    const meta = TYPE_META[ann.type];
+    const opacity = [0.15, 0.25, 0.4][ann.severity - 1];
+    const lo = Math.min(ann.startIdx, ann.endIdx);
+    const hi = Math.max(ann.startIdx, ann.endIdx);
+    for (let i = lo; i <= hi; i++) {
+      const note = S.noteIndex[i];
+      if (note?.svgEl) {
+        addHighlightRect(note.svgEl, meta.color, opacity, 'ann-highlight');
+      }
+    }
+  }
+}
+
+function addHighlightRect(svgEl, color, opacity, className) {
+  try {
+    const bbox = svgEl.getBBox();
+    const ns = 'http://www.w3.org/2000/svg';
+    const rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', bbox.x - 3);
+    rect.setAttribute('y', bbox.y - 3);
+    rect.setAttribute('width', bbox.width + 6);
+    rect.setAttribute('height', bbox.height + 6);
+    rect.setAttribute('fill', color);
+    rect.setAttribute('opacity', opacity);
+    rect.setAttribute('rx', '3');
+    rect.classList.add(className);
+    svgEl.parentNode.insertBefore(rect, svgEl);
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════════
+// Export / Import
+// ═══════════════════════════════════════════════════════
+document.getElementById('btn-export-csv').onclick = () => {
+  const lines = [
+    `# filename: ${S.audioFilename}`,
+    `# score: ${S.scoreFilename}`,
+    `# annotator: ${document.getElementById('annotator-name').value}`,
+    `# date: ${new Date().toISOString().split('T')[0]}`,
+    `# num_notes: ${S.noteIndex.length}`,
+    '',
+    'type,start_measure_beat,end_measure_beat,start_note_idx,end_note_idx,start_pitch,end_pitch,severity,extra_fields,notes',
+  ];
+  for (const ann of S.annotations) {
+    const extra = JSON.stringify(ann.extra).replace(/"/g, '""');
+    const notes = (ann.notes || '').replace(/"/g, '""');
+    lines.push([
+      ann.type, ann.startMeasureBeat, ann.endMeasureBeat,
+      ann.startIdx, ann.endIdx, ann.startPitch, ann.endPitch,
+      ann.severity, `"${extra}"`, `"${notes}"`
+    ].join(','));
+  }
+  downloadFile(lines.join('\n'), `annotations_${S.audioFilename.replace(/\.\w+$/,'')}.csv`, 'text/csv');
+};
+
+document.getElementById('btn-export-json').onclick = () => {
+  const data = {
+    metadata: {
+      filename: S.audioFilename,
+      score: S.scoreFilename,
+      annotator: document.getElementById('annotator-name').value,
+      date: new Date().toISOString(),
+      num_notes: S.noteIndex.length,
+    },
+    annotations: S.annotations,
+  };
+  downloadFile(JSON.stringify(data, null, 2), `annotations_${S.audioFilename.replace(/\.\w+$/,'')}.json`, 'application/json');
+};
+
+document.getElementById('btn-import').onclick = () => document.getElementById('import-input').click();
+document.getElementById('import-input').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  if (S.annotations.length > 0 && !confirm(`This will replace ${S.annotations.length} existing annotations. Continue?`)) {
+    return;
+  }
+
+  const text = await file.text();
+  try {
+    if (file.name.endsWith('.json')) {
+      const data = JSON.parse(text);
+      S.annotations = data.annotations || [];
+    } else {
+      // CSV import — use state-machine parser for robustness
+      S.annotations = parseCSV(text);
+    }
+    renderAnnotationList();
+    renderAllHighlights();
+    saveToLocalStorage();
+    alert(`Imported ${S.annotations.length} annotations`);
+  } catch(err) {
+    alert('Import failed: ' + err.message);
+  }
+};
+
+function parseCSV(text) {
+  const lines = text.split('\n').filter(l => l.trim() && !l.startsWith('#'));
+  if (lines.length < 2) return [];
+
+  const results = [];
+  for (let i = 1; i < lines.length; i++) {
+    const fields = parseCSVLine(lines[i]);
+    if (fields.length < 8) continue;
+    results.push({
+      id: Date.now() + i,
+      type: fields[0],
+      startMeasureBeat: fields[1],
+      endMeasureBeat: fields[2],
+      startIdx: parseInt(fields[3]),
+      endIdx: parseInt(fields[4]),
+      startPitch: fields[5] || '',
+      endPitch: fields[6] || '',
+      severity: parseInt(fields[7]) || 2,
+      extra: fields[8] ? (() => { try { return JSON.parse(fields[8]); } catch(e) { return {}; } })() : {},
+      notes: fields[9] || '',
+    });
+  }
+  return results;
+}
+
+function parseCSVLine(line) {
+  const fields = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++; // skip escaped quote
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        fields.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+  }
+  fields.push(current);
+  return fields;
+}
+
+function downloadFile(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+}
+
+// ═══════════════════════════════════════════════════════
+// LocalStorage auto-save
+// ═══════════════════════════════════════════════════════
+function saveToLocalStorage() {
+  localStorage.setItem('violin_annotations', JSON.stringify({
+    annotations: S.annotations,
+    audioFilename: S.audioFilename,
+    scoreFilename: S.scoreFilename,
+    annotator: document.getElementById('annotator-name').value,
+  }));
+}
+
+function loadFromLocalStorage() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('violin_annotations'));
+    if (saved && saved.annotations?.length > 0) {
+      if (confirm(`Restore ${saved.annotations.length} annotations from previous session (${saved.audioFilename})?`)) {
+        S.annotations = saved.annotations;
+        S.audioFilename = saved.audioFilename || '';
+        S.scoreFilename = saved.scoreFilename || '';
+        document.getElementById('annotator-name').value = saved.annotator || '';
+        renderAnnotationList();
+      }
+    }
+  } catch(e) {}
+}
+
+// Auto-save every 30s
+setInterval(saveToLocalStorage, 30000);
+
+// ═══════════════════════════════════════════════════════
+// Keyboard Shortcuts
+// ═══════════════════════════════════════════════════════
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+  switch(e.key) {
+    case ' ':
+      e.preventDefault();
+      S.wavesurfer?.playPause();
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      S.wavesurfer?.skip(-2);
+      break;
+    case 'ArrowRight':
+      e.preventDefault();
+      S.wavesurfer?.skip(2);
+      break;
+    case '[':
+      e.preventDefault();
+      if (S.wavesurfer) {
+        const r = Math.max(0.25, S.wavesurfer.getPlaybackRate() - 0.25);
+        S.wavesurfer.setPlaybackRate(r);
+        document.getElementById('speed-select').value = r;
+      }
+      break;
+    case ']':
+      e.preventDefault();
+      if (S.wavesurfer) {
+        const r = Math.min(2, S.wavesurfer.getPlaybackRate() + 0.25);
+        S.wavesurfer.setPlaybackRate(r);
+        document.getElementById('speed-select').value = r;
+      }
+      break;
+    case 'Escape':
+      cancelAnnotation();
+      document.getElementById('popup-overlay').classList.remove('visible');
+      break;
+    default:
+      // Number keys 1-9 for error types
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= 9 && !S.mode) {
+        enterAnnotationMode(ERROR_TYPES_ORDERED[num - 1]);
+      }
+      break;
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════
+renderAnnotationList();
+loadFromLocalStorage();
+</script>
+</body>
+</html>
