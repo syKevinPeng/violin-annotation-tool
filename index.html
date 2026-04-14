@@ -118,6 +118,7 @@
       border-radius: 3px;
       font-family: monospace;
     }
+    .err-btn .click-hint { font-size: 10px; opacity: 0.6; }
     .err-btn:hover { filter: brightness(0.93); transform: translateY(-1px); }
     .err-btn.active {
       border-color: var(--ink);
@@ -374,15 +375,15 @@
 <!-- ─── Error Type Toolbar ─── -->
 <div id="error-toolbar">
   <span class="toolbar-label">Mark Error:</span>
-  <button class="err-btn" data-type="wrong_note"><span class="key-hint">1</span> Wrong Note</button>
-  <button class="err-btn" data-type="intonation"><span class="key-hint">2</span> Intonation</button>
-  <button class="err-btn" data-type="note_swap"><span class="key-hint">3</span> Note Swap</button>
-  <button class="err-btn" data-type="skip"><span class="key-hint">4</span> Skip</button>
-  <button class="err-btn" data-type="repetition"><span class="key-hint">5</span> Repetition</button>
-  <button class="err-btn" data-type="pause"><span class="key-hint">6</span> Pause</button>
-  <button class="err-btn" data-type="tempo_drift"><span class="key-hint">7</span> Tempo Drift</button>
-  <button class="err-btn" data-type="early_late_entry"><span class="key-hint">8</span> Early/Late</button>
-  <button class="err-btn" data-type="stopped_restart"><span class="key-hint">9</span> Stop+Restart</button>
+  <button class="err-btn" data-type="wrong_note" title="Click 1 note"><span class="key-hint">1</span> Wrong Note <span class="click-hint">(1 click)</span></button>
+  <button class="err-btn" data-type="intonation" title="Click start note, then end note"><span class="key-hint">2</span> Intonation <span class="click-hint">(2 clicks)</span></button>
+  <button class="err-btn" data-type="note_swap" title="Click the two swapped notes"><span class="key-hint">3</span> Note Swap <span class="click-hint">(2 clicks)</span></button>
+  <button class="err-btn" data-type="skip" title="Click first and last skipped note"><span class="key-hint">4</span> Skip <span class="click-hint">(2 clicks)</span></button>
+  <button class="err-btn" data-type="repetition" title="Click start and end of repeated passage"><span class="key-hint">5</span> Repetition <span class="click-hint">(2 clicks)</span></button>
+  <button class="err-btn" data-type="pause" title="Click the note before the pause"><span class="key-hint">6</span> Pause <span class="click-hint">(1 click)</span></button>
+  <button class="err-btn" data-type="tempo_drift" title="Click start and end of tempo change"><span class="key-hint">7</span> Tempo Drift <span class="click-hint">(2 clicks)</span></button>
+  <button class="err-btn" data-type="early_late_entry" title="Click affected notes"><span class="key-hint">8</span> Early/Late <span class="click-hint">(2 clicks)</span></button>
+  <button class="err-btn" data-type="stopped_restart" title="Click stop point, then restart point"><span class="key-hint">9</span> Stop+Restart <span class="click-hint">(2 clicks)</span></button>
   <button class="err-btn" id="btn-cancel" style="display:none;">&#x2715; Cancel</button>
 </div>
 
@@ -408,9 +409,9 @@
   <div id="audio-area">
     <div id="waveform"></div>
     <div id="audio-controls">
-      <button id="btn-back" title="Back 5s (Left Arrow)">&#x23EA;</button>
+      <button id="btn-back" title="Back 2s (Left Arrow)">&#x23EA;</button>
       <button id="btn-play" title="Play/Pause (Space)">&#x25B6;</button>
-      <button id="btn-fwd" title="Forward 5s (Right Arrow)">&#x23E9;</button>
+      <button id="btn-fwd" title="Forward 2s (Right Arrow)">&#x23E9;</button>
       <span id="time-display">00:00.0 / 00:00.0</span>
       <label>Speed: <select id="speed-select">
         <option value="0.25">0.25x</option>
@@ -427,9 +428,9 @@
     <h3>
       Annotations (<span id="ann-count">0</span>)
       <span class="export-btns">
-        <button id="btn-export-csv" title="Download annotations as CSV">Export CSV</button>
-        <button id="btn-export-json" title="Download annotations as JSON">Export JSON</button>
-        <button id="btn-import" title="Load previously saved annotations">Import</button>
+        <button id="btn-export-csv" title="Download as spreadsheet (opens in Excel/Google Sheets)">Export CSV</button>
+        <button id="btn-export-json" title="Download as JSON (for loading back into this tool)">Export JSON</button>
+        <button id="btn-import" title="Load previously saved annotations from a file">Import</button>
         <input type="file" id="import-input" accept=".csv,.json" style="display:none">
       </span>
     </h3>
@@ -480,6 +481,7 @@ const S = {
   noteIndex: [],        // [{globalIndex, measure, beat, measureBeat, pitch, svgEl}]
   osmd: null,
   wavesurfer: null,
+  editingId: null,
   audioFilename: '',
   scoreFilename: '',
 };
@@ -492,7 +494,7 @@ const TYPE_META = {
   repetition:       { label: 'Repetition',     clicks: 2, color: '#3498db' },
   pause:            { label: 'Pause',          clicks: 1, color: '#7f8c8d' },
   tempo_drift:      { label: 'Tempo Drift',    clicks: 2, color: '#27ae60' },
-  early_late_entry: { label: 'Early/Late',     clicks: 2, color: '#f1c40f' },
+  early_late_entry: { label: 'Early/Late',     clicks: 2, color: '#d97706' },
   stopped_restart:  { label: 'Stop+Restart',   clicks: 2, color: '#c0392b' },
 };
 
@@ -563,8 +565,8 @@ document.getElementById('audio-input').addEventListener('change', (e) => {
 });
 
 document.getElementById('btn-play').onclick = () => S.wavesurfer?.playPause();
-document.getElementById('btn-back').onclick = () => S.wavesurfer?.skip(-5);
-document.getElementById('btn-fwd').onclick = () => S.wavesurfer?.skip(5);
+document.getElementById('btn-back').onclick = () => S.wavesurfer?.skip(-2);
+document.getElementById('btn-fwd').onclick = () => S.wavesurfer?.skip(2);
 document.getElementById('speed-select').onchange = (e) => {
   S.wavesurfer?.setPlaybackRate(parseFloat(e.target.value));
 };
@@ -585,6 +587,7 @@ async function initScore(file) {
     drawTitle: true,
     drawSubtitle: false,
     drawComposer: true,
+    drawMeasureNumbers: true,
   });
 
   await S.osmd.load(text);
@@ -696,6 +699,7 @@ document.getElementById('score-input').addEventListener('change', async (e) => {
     const slot = document.getElementById('score-slot');
     slot.classList.add('loaded');
     document.getElementById('score-hint').innerHTML = `<span class="file-name">Loaded: ${escHtml(e.target.files[0].name)} (${S.noteIndex.length} notes)</span>`;
+    renderAllHighlights(); // Re-apply any imported annotations
   }
 });
 
@@ -738,6 +742,7 @@ function cancelAnnotation() {
   S.currentType = null;
   S.startIdx = null;
   S.endIdx = null;
+  S.editingId = null;
   document.querySelectorAll('.err-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('btn-cancel').style.display = 'none';
   document.getElementById('score-area').classList.remove('selecting');
@@ -810,8 +815,17 @@ function showDetailPopup() {
 
   document.getElementById('popup-overlay').classList.add('visible');
 
-  // Focus notes input
-  setTimeout(() => document.getElementById('popup-notes').focus(), 100);
+  // Focus notes input + Enter to confirm
+  setTimeout(() => {
+    const notesInput = document.getElementById('popup-notes');
+    notesInput.focus();
+    notesInput.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('btn-popup-confirm').click();
+      }
+    };
+  }, 100);
 }
 
 function buildTypeFields(type, startNote, endNote) {
@@ -900,22 +914,33 @@ document.getElementById('btn-popup-confirm').onclick = () => {
   const severity = parseInt(document.querySelector('.severity-btns button.selected')?.dataset.sev || '2');
   const notes = document.getElementById('popup-notes').value;
 
-  const ann = {
-    id: Date.now(),
-    type: S.currentType,
-    startIdx: S.startIdx,
-    endIdx: S.endIdx,
-    startMeasureBeat: S.noteIndex[S.startIdx].measureBeat,
-    endMeasureBeat: S.noteIndex[S.endIdx].measureBeat,
-    startPitch: S.noteIndex[S.startIdx].pitch,
-    endPitch: S.noteIndex[S.endIdx].pitch,
-    severity: severity,
-    notes: notes,
-    extra: collectExtraFields(S.currentType),
-  };
+  if (S.editingId) {
+    // Update existing annotation
+    const ann = S.annotations.find(a => a.id === S.editingId);
+    if (ann) {
+      ann.severity = severity;
+      ann.notes = notes;
+      ann.extra = collectExtraFields(ann.type);
+    }
+    S.editingId = null;
+  } else {
+    // Create new annotation
+    const ann = {
+      id: Date.now(),
+      type: S.currentType,
+      startIdx: S.startIdx,
+      endIdx: S.endIdx,
+      startMeasureBeat: S.noteIndex[S.startIdx].measureBeat,
+      endMeasureBeat: S.noteIndex[S.endIdx].measureBeat,
+      startPitch: S.noteIndex[S.startIdx].pitch,
+      endPitch: S.noteIndex[S.endIdx].pitch,
+      severity: severity,
+      notes: notes,
+      extra: collectExtraFields(S.currentType),
+    };
+    S.annotations.push(ann);
+  }
 
-  S.annotations.push(ann);
-  document.getElementById('popup-overlay').classList.remove('visible');
   cancelAnnotation();
   renderAnnotationList();
   renderAllHighlights();
@@ -959,6 +984,7 @@ function renderAnnotationList() {
       ? escHtml(ann.startMeasureBeat)
       : `${escHtml(ann.startMeasureBeat)} → ${escHtml(ann.endMeasureBeat)}`;
     return `<div class="ann-item" style="border-left-color:${meta.color}">
+      <span class="ann-num" style="color:var(--muted);min-width:28px;font-size:11px;">#${i+1}</span>
       <span class="ann-type" style="color:${meta.color}">${escHtml(meta.label)}</span>
       <span class="ann-loc">${loc}</span>
       <span class="ann-sev">sev=${ann.severity}</span>
@@ -983,13 +1009,12 @@ window.editAnnotation = function(id) {
   const ann = S.annotations.find(a => a.id === id);
   if (!ann) return;
 
-  // Set up state as if we just selected the notes
+  S.editingId = id;
   S.currentType = ann.type;
   S.startIdx = ann.startIdx;
   S.endIdx = ann.endIdx;
   S.mode = 'popup';
 
-  // Show popup with existing values
   showDetailPopup();
 
   // Pre-fill existing values after popup renders
@@ -998,52 +1023,25 @@ window.editAnnotation = function(id) {
     document.querySelectorAll('.severity-btns button').forEach(b => {
       b.classList.toggle('selected', b.dataset.sev === String(ann.severity));
     });
-    // Pre-fill type-specific fields
     const extra = ann.extra || {};
+    const fieldMap = {
+      played_pitch: 'f-played-pitch', direction: 'f-direction', degree: 'f-degree',
+      times_played: 'f-times', duration: 'f-pause-dur', pause_duration: 'f-sr-pause',
+      amount: 'f-entry-amt',
+    };
     for (const [key, val] of Object.entries(extra)) {
-      const el = document.getElementById('f-' + key.replace(/_/g, '-'));
+      const el = document.getElementById(fieldMap[key] || ('f-' + key.replace(/_/g, '-')));
       if (el) el.value = val;
-      // Also try without f- prefix mapping
-      const mappings = {
-        played_pitch: 'f-played-pitch', direction: 'f-direction', degree: 'f-degree',
-        times_played: 'f-times', duration: 'f-pause-dur', pause_duration: 'f-sr-pause',
-        amount: 'f-entry-amt',
-      };
-      if (mappings[key]) {
-        const mapped = document.getElementById(mappings[key]);
-        if (mapped) mapped.value = val;
-      }
     }
-    // Also try drift-specific fields
-    if (extra.direction && ann.type === 'tempo_drift') {
-      const el = document.getElementById('f-drift-dir');
-      if (el) el.value = extra.direction;
+    // Type-specific overrides for shared field names
+    if (ann.type === 'tempo_drift') {
+      if (extra.direction) { const el = document.getElementById('f-drift-dir'); if (el) el.value = extra.direction; }
+      if (extra.degree) { const el = document.getElementById('f-drift-deg'); if (el) el.value = extra.degree; }
     }
-    if (extra.degree && ann.type === 'tempo_drift') {
-      const el = document.getElementById('f-drift-deg');
-      if (el) el.value = extra.degree;
-    }
-    if (extra.direction && ann.type === 'early_late_entry') {
-      const el = document.getElementById('f-entry-dir');
-      if (el) el.value = extra.direction;
+    if (ann.type === 'early_late_entry') {
+      if (extra.direction) { const el = document.getElementById('f-entry-dir'); if (el) el.value = extra.direction; }
     }
   }, 50);
-
-  // Override confirm to update instead of create
-  const origConfirm = document.getElementById('btn-popup-confirm').onclick;
-  document.getElementById('btn-popup-confirm').onclick = () => {
-    const severity = parseInt(document.querySelector('.severity-btns button.selected')?.dataset.sev || '2');
-    ann.severity = severity;
-    ann.notes = document.getElementById('popup-notes').value;
-    ann.extra = collectExtraFields(ann.type);
-    document.getElementById('popup-overlay').classList.remove('visible');
-    cancelAnnotation();
-    renderAnnotationList();
-    renderAllHighlights();
-    saveToLocalStorage();
-    // Restore original confirm handler
-    document.getElementById('btn-popup-confirm').onclick = origConfirm;
-  };
 };
 
 // ═══════════════════════════════════════════════════════
@@ -1306,9 +1304,10 @@ document.addEventListener('keydown', (e) => {
       document.getElementById('popup-overlay').classList.remove('visible');
       break;
     default:
-      // Number keys 1-9 for error types
+      // Number keys 1-9 for error types (allow switching mid-selection)
       const num = parseInt(e.key);
-      if (num >= 1 && num <= 9 && !S.mode) {
+      if (num >= 1 && num <= 9 && S.mode !== 'popup') {
+        cancelAnnotation();
         enterAnnotationMode(ERROR_TYPES_ORDERED[num - 1]);
       }
       break;
