@@ -576,7 +576,22 @@ document.getElementById('speed-select').onchange = (e) => {
 // ═══════════════════════════════════════════════════════
 async function initScore(file) {
   S.scoreFilename = file.name;
-  const text = await file.text();
+
+  // .mxl is a ZIP; OSMD needs a raw binary string (or ArrayBuffer),
+  // NOT the UTF-8-decoded text from file.text().
+  const isMxl = /\.mxl$/i.test(file.name);
+  let data;
+  if (isMxl) {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    let s = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < buf.length; i += CHUNK) {
+      s += String.fromCharCode.apply(null, buf.subarray(i, i + CHUNK));
+    }
+    data = s;
+  } else {
+    data = await file.text();
+  }
 
   const host = document.getElementById('scoreHost');
   host.innerHTML = '';
@@ -590,7 +605,7 @@ async function initScore(file) {
     drawMeasureNumbers: true,
   });
 
-  await S.osmd.load(text);
+  await S.osmd.load(data);
   S.osmd.render();
   buildNoteIndex();
 }
@@ -693,14 +708,25 @@ function buildNoteIndex() {
 }
 
 document.getElementById('score-input').addEventListener('change', async (e) => {
-  if (e.target.files[0]) {
-    document.getElementById('score-empty').style.display = 'none';
-    await initScore(e.target.files[0]);
-    const slot = document.getElementById('score-slot');
-    slot.classList.add('loaded');
-    document.getElementById('score-hint').innerHTML = `<span class="file-name">Loaded: ${escHtml(e.target.files[0].name)} (${S.noteIndex.length} notes)</span>`;
-    renderAllHighlights(); // Re-apply any imported annotations
+  const file = e.target.files[0];
+  if (!file) return;
+  const empty = document.getElementById('score-empty');
+  const slot = document.getElementById('score-slot');
+  empty.style.display = 'none';
+  try {
+    await initScore(file);
+  } catch (err) {
+    console.error('Score load failed:', err);
+    alert(`Failed to load score "${file.name}":\n\n${err.message || err}\n\nFor .mxl files: confirm the file isn't corrupted. For .xml/.musicxml: confirm it's valid MusicXML.`);
+    document.getElementById('scoreHost').innerHTML = '';
+    empty.style.display = '';
+    slot.classList.remove('loaded');
+    document.getElementById('score-hint').textContent = 'Click to load MusicXML file (.xml, .musicxml, .mxl)';
+    return;
   }
+  slot.classList.add('loaded');
+  document.getElementById('score-hint').innerHTML = `<span class="file-name">Loaded: ${escHtml(file.name)} (${S.noteIndex.length} notes)</span>`;
+  renderAllHighlights(); // Re-apply any imported annotations
 });
 
 // ═══════════════════════════════════════════════════════
