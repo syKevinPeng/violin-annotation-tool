@@ -768,6 +768,7 @@ function cancelAnnotation() {
   S.currentType = null;
   S.startIdx = null;
   S.endIdx = null;
+  S.startAudioTime = null;
   S.editingId = null;
   document.querySelectorAll('.err-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('btn-cancel').style.display = 'none';
@@ -784,6 +785,8 @@ function onNoteClicked(idx) {
 
   if (S.mode === 'select_start') {
     S.startIdx = idx;
+    // Stamp the audio playhead so we can seek back here later.
+    S.startAudioTime = S.wavesurfer?.getCurrentTime?.() ?? null;
     highlightNoteTemp(idx, meta.color);
 
     if (meta.clicks === 1) {
@@ -962,6 +965,7 @@ document.getElementById('btn-popup-confirm').onclick = () => {
       endPitch: S.noteIndex[S.endIdx].pitch,
       severity: severity,
       notes: notes,
+      audioTime: S.startAudioTime ?? null,
       extra: collectExtraFields(S.currentType),
     };
     S.annotations.push(ann);
@@ -1009,16 +1013,19 @@ function renderAnnotationList() {
     const loc = ann.startIdx === ann.endIdx
       ? escHtml(ann.startMeasureBeat)
       : `${escHtml(ann.startMeasureBeat)} → ${escHtml(ann.endMeasureBeat)}`;
-    return `<div class="ann-item" data-id="${ann.id}" style="border-left-color:${meta.color}"
-      onmouseenter="previewAnnotation(${ann.id})" onmouseleave="clearAnnotationPreview()">
+    const seekable = ann.audioTime != null;
+    return `<div class="ann-item" data-id="${ann.id}" style="border-left-color:${meta.color}; cursor:${seekable ? 'pointer' : 'default'}"
+      title="${seekable ? 'Click to seek audio to this error' : 'No audio time recorded for this annotation'}"
+      onmouseenter="previewAnnotation(${ann.id})" onmouseleave="clearAnnotationPreview()"
+      onclick="seekToAnnotation(${ann.id})">
       <span class="ann-num" style="color:var(--muted);min-width:28px;font-size:11px;">#${i+1}</span>
       <span class="ann-type" style="color:${meta.color}">${escHtml(meta.label)}</span>
       <span class="ann-loc">${loc}</span>
       <span class="ann-sev">sev=${ann.severity}</span>
       <span class="ann-notes">${escHtml(ann.notes || '')}</span>
       <span class="ann-actions">
-        <button onclick="editAnnotation(${ann.id})">Edit</button>
-        <button class="del-btn" onclick="deleteAnnotation(${ann.id})">Delete</button>
+        <button onclick="event.stopPropagation(); editAnnotation(${ann.id})">Edit</button>
+        <button class="del-btn" onclick="event.stopPropagation(); deleteAnnotation(${ann.id})">Delete</button>
       </span>
     </div>`;
   }).join('');
@@ -1048,6 +1055,18 @@ window.previewAnnotation = function(id) {
 
 window.clearAnnotationPreview = function() {
   document.querySelectorAll('.preview-highlight').forEach(el => el.remove());
+};
+
+window.seekToAnnotation = function(id) {
+  const ann = S.annotations.find(a => a.id === id);
+  if (!ann || ann.audioTime == null || !S.wavesurfer) return;
+  const t = Math.max(0, ann.audioTime);
+  if (typeof S.wavesurfer.setTime === 'function') {
+    S.wavesurfer.setTime(t);
+  } else if (typeof S.wavesurfer.seekTo === 'function') {
+    const dur = S.wavesurfer.getDuration?.() || 0;
+    if (dur > 0) S.wavesurfer.seekTo(t / dur);
+  }
 };
 
 window.deleteAnnotation = function(id) {
@@ -1167,7 +1186,7 @@ document.getElementById('btn-export-csv').onclick = () => {
     `# date: ${new Date().toISOString().split('T')[0]}`,
     `# num_notes: ${S.noteIndex.length}`,
     '',
-    'type,start_measure_beat,end_measure_beat,start_note_idx,end_note_idx,start_pitch,end_pitch,severity,extra_fields,notes',
+    'type,start_measure_beat,end_measure_beat,start_note_idx,end_note_idx,start_pitch,end_pitch,severity,extra_fields,notes,audio_time',
   ];
   for (const ann of S.annotations) {
     const extra = JSON.stringify(ann.extra).replace(/"/g, '""');
@@ -1175,7 +1194,8 @@ document.getElementById('btn-export-csv').onclick = () => {
     lines.push([
       ann.type, ann.startMeasureBeat, ann.endMeasureBeat,
       ann.startIdx, ann.endIdx, ann.startPitch, ann.endPitch,
-      ann.severity, `"${extra}"`, `"${notes}"`
+      ann.severity, `"${extra}"`, `"${notes}"`,
+      ann.audioTime != null ? ann.audioTime.toFixed(3) : ''
     ].join(','));
   }
   downloadFile(lines.join('\n'), `annotations_${S.audioFilename.replace(/\.\w+$/,'')}.csv`, 'text/csv');
@@ -1242,6 +1262,7 @@ function parseCSV(text) {
       severity: parseInt(fields[7]) || 2,
       extra: fields[8] ? (() => { try { return JSON.parse(fields[8]); } catch(e) { return {}; } })() : {},
       notes: fields[9] || '',
+      audioTime: fields[10] !== undefined && fields[10] !== '' ? parseFloat(fields[10]) : null,
     });
   }
   return results;
