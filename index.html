@@ -348,6 +348,7 @@
 <div id="header">
   <h1>Violin Error Annotation Tool</h1>
   <div class="header-right">
+    <button id="btn-help" type="button" title="Show full instructions" style="padding:4px 12px; border:1px solid #4a5568; border-radius:4px; background:#2d3748; color:white; cursor:pointer; font-size:13px; font-weight:600;">? Help</button>
     <label>Annotator: <input type="text" id="annotator-name" placeholder="Your name"></label>
   </div>
 </div>
@@ -391,9 +392,10 @@
 </div>
 <!-- Tap-Align progress strip (shown only during tap-align mode) -->
 <div id="tap-align-bar" style="display:none; align-items:center; gap:12px; padding:6px 16px; background:#ecfeff; border-bottom:1px solid #06b6d4; font-size:13px;">
-  <strong style="color:#0e7490;">Tap-Align Active</strong>
-  <span id="tap-align-progress" style="font-family:monospace; color:#0e7490;">Tap 0 / 0</span>
-  <span style="color:#64748b; font-size:12px;">SPACE = tap • BACKSPACE = undo • P = play/pause • ESC = finish</span>
+  <strong style="color:#0e7490;">🎵 Tap-Align Active</strong>
+  <span style="color:#0e7490;">Press <kbd>Space</kbd> on each note's onset →</span>
+  <span id="tap-align-progress" style="font-family:monospace; color:#0e7490; font-weight:600;">Tap 0 / 0</span>
+  <span style="color:#64748b; font-size:12px; margin-left:auto;"><kbd>Backspace</kbd> undo • <kbd>P</kbd> play/pause • <kbd>Esc</kbd> finish</span>
 </div>
 
 <!-- ─── Main ─── -->
@@ -407,10 +409,11 @@
       <div class="empty-steps">
         <div><span class="step-num">1</span> Load a <strong>student recording</strong> (audio file)</div>
         <div><span class="step-num">2</span> Load the <strong>sheet music</strong> (MusicXML file)</div>
-        <div><span class="step-num">3</span> Listen and <strong>click notes</strong> in the score to mark errors</div>
-        <div><span class="step-num">4</span> <strong>Export</strong> your annotations as CSV or JSON</div>
+        <div><span class="step-num">3</span> <strong>Pass A — Mark errors:</strong> click an error type (or press 1-9), then click the affected notes in the score</div>
+        <div><span class="step-num">4</span> <strong>Pass B — Tap-Align:</strong> click 🎵 Tap-Align, then press <kbd>Space</kbd> on each note's onset to record per-note timing</div>
+        <div><span class="step-num">5</span> <strong>Export Aligned JSON</strong> when done</div>
       </div>
-      <div class="empty-hint">Use the toolbar above to load files. Your work is auto-saved in the browser.</div>
+      <div class="empty-hint">Use the toolbar above to load files. Click <strong>? Help</strong> in the top-right for full instructions. Your work is auto-saved in the browser.</div>
     </div>
     <div id="scoreHost"></div>
   </div>
@@ -470,6 +473,95 @@
     <div class="popup-actions">
       <button id="btn-popup-confirm">Confirm</button>
       <button id="btn-popup-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Help Modal ─── -->
+<div id="help-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:200; justify-content:center; align-items:center;">
+  <div id="help-modal" style="background:white; border-radius:14px; padding:24px 28px; max-width:780px; width:92%; max-height:88vh; overflow:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3); font-size:13px; line-height:1.55;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid #e5e7eb;">
+      <h2 style="font-size:20px; margin:0;">How to Annotate</h2>
+      <button id="btn-help-close" type="button" style="font-size:18px; padding:4px 12px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer;">×</button>
+    </div>
+
+    <h3 style="font-size:15px; margin-top:14px; color:#0e7490;">Workflow Overview</h3>
+    <ol style="padding-left:22px; margin-top:6px;">
+      <li><strong>Load files</strong> — student audio (WAV/MP3/OGG/FLAC) + score (MusicXML).</li>
+      <li><strong>Listen and mark errors</strong> — click an error type (or press <kbd>1</kbd>–<kbd>9</kbd>), then click the affected note(s) in the score. A popup will ask for severity and any extra detail.</li>
+      <li><strong>Run Tap-Align</strong> — click <strong>🎵 Tap-Align</strong> in the toolbar. Audio plays from the start; press <kbd>Space</kbd> on every note onset you hear. The tool uses your error annotations to map taps to score notes automatically.</li>
+      <li><strong>Export Aligned JSON</strong> — gives you a per-note record with audio onset times and status labels, ready for downstream model training/eval.</li>
+    </ol>
+
+    <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Error Types</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px;">
+      <thead><tr style="background:#f3f4f6; text-align:left;"><th style="padding:6px 8px;">Key</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Clicks</th><th style="padding:6px 8px;">Meaning</th></tr></thead>
+      <tbody style="vertical-align:top;">
+        <tr><td style="padding:5px 8px;"><kbd>1</kbd></td><td style="padding:5px 8px;">Wrong Note</td><td style="padding:5px 8px;">1</td><td style="padding:5px 8px;">A clearly incorrect pitch (~&gt; ½ semitone).</td></tr>
+        <tr><td style="padding:5px 8px;"><kbd>2</kbd></td><td style="padding:5px 8px;">Intonation</td><td style="padding:5px 8px;">2</td><td style="padding:5px 8px;">Notes audibly out of tune (sharp / flat / unstable).</td></tr>
+        <tr><td style="padding:5px 8px;"><kbd>3</kbd></td><td style="padding:5px 8px;">Note Swap</td><td style="padding:5px 8px;">2</td><td style="padding:5px 8px;">Two adjacent notes played in reversed order.</td></tr>
+        <tr><td style="padding:5px 8px;"><kbd>4</kbd></td><td style="padding:5px 8px;">Skip</td><td style="padding:5px 8px;">2</td><td style="padding:5px 8px;">Notes omitted entirely. Click first &amp; last skipped note.</td></tr>
+        <tr><td style="padding:5px 8px;"><kbd>5</kbd></td><td style="padding:5px 8px;">Repetition</td><td style="padding:5px 8px;">2</td><td style="padding:5px 8px;">A passage played more than once. Specify <em>times played</em> and whether it was a clean or corrective repeat (see below).</td></tr>
+        <tr><td style="padding:5px 8px;"><kbd>6</kbd></td><td style="padding:5px 8px;">Pause</td><td style="padding:5px 8px;">1</td><td style="padding:5px 8px;">Unintended hesitation between notes.</td></tr>
+        <tr><td style="padding:5px 8px;"><kbd>7</kbd></td><td style="padding:5px 8px;">Tempo Drift</td><td style="padding:5px 8px;">2</td><td style="padding:5px 8px;">Gradually rushing or dragging across a span.</td></tr>
+        <tr><td style="padding:5px 8px;"><kbd>8</kbd></td><td style="padding:5px 8px;">Early/Late</td><td style="padding:5px 8px;">2</td><td style="padding:5px 8px;">Note(s) entered noticeably early or late.</td></tr>
+        <tr><td style="padding:5px 8px;"><kbd>9</kbd></td><td style="padding:5px 8px;">Stop+Restart</td><td style="padding:5px 8px;">2</td><td style="padding:5px 8px;">Performer stopped and restarted from earlier. Click the stop point first, then where they restarted from.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Tap-Align Mode</h3>
+    <p>Click <strong>🎵 Tap-Align</strong> in the toolbar after marking all errors. Audio starts from the beginning and the next-expected score note is highlighted in <span style="color:#3b82f6; font-weight:600;">blue</span>.</p>
+    <p><strong>Tap rule:</strong> tap <kbd>Space</kbd> on every note onset you hear, including wrong notes (still tap them — you're recording the timing, not judging correctness). The only exception is <strong>skipped</strong> notes: don't tap, the tool already knows to omit them.</p>
+    <p><strong>Why errors first?</strong> The error labels tell the tool how to map your taps to score notes when the performance deviates structurally (skips, repeats, swaps). Without them, tap-align can't know where in the score each tap belongs.</p>
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px;">
+      <thead><tr style="background:#f3f4f6; text-align:left;"><th style="padding:5px 8px;">Key</th><th style="padding:5px 8px;">Action</th></tr></thead>
+      <tbody>
+        <tr><td style="padding:4px 8px;"><kbd>Space</kbd></td><td style="padding:4px 8px;">Record a tap at the current playhead time</td></tr>
+        <tr><td style="padding:4px 8px;"><kbd>Backspace</kbd></td><td style="padding:4px 8px;">Undo the most recent tap</td></tr>
+        <tr><td style="padding:4px 8px;"><kbd>P</kbd></td><td style="padding:4px 8px;">Play / pause audio (Space is reassigned to Tap during this mode)</td></tr>
+        <tr><td style="padding:4px 8px;"><kbd>Esc</kbd></td><td style="padding:4px 8px;">End Tap-Align (saves your taps)</td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:8px;">When you finish, the tool reports any mismatch between recorded and expected tap counts. A mismatch usually means a missing error annotation or a missed tap.</p>
+
+    <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Repetition: Clean vs Corrective</h3>
+    <p>When you mark a repetition, the tool asks <em>why</em> the passage was repeated. The answer changes how labels are assigned across passes:</p>
+    <ul style="padding-left:22px;">
+      <li><strong>Clean repeat</strong> — the first pass was fine; the extra play is the error. Pass 1 keeps any underlying labels; pass 2+ becomes <code>repetition</code>.</li>
+      <li><strong>Corrective repeat</strong> — the first pass had a mistake, the last pass is the corrected take. Pass 1 (and any middle passes) keep the underlying error label; the final pass becomes <code>clean</code>.</li>
+    </ul>
+    <p>If a corrective repeat fixed an underlying error (e.g., a wrong note), mark that error <em>separately</em> as a normal annotation at its score location. The tool composes them automatically.</p>
+
+    <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Playback Shortcuts (outside Tap-Align mode)</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px;">
+      <thead><tr style="background:#f3f4f6; text-align:left;"><th style="padding:5px 8px;">Key</th><th style="padding:5px 8px;">Action</th></tr></thead>
+      <tbody>
+        <tr><td style="padding:4px 8px;"><kbd>Space</kbd></td><td style="padding:4px 8px;">Play / pause</td></tr>
+        <tr><td style="padding:4px 8px;"><kbd>←</kbd> / <kbd>→</kbd></td><td style="padding:4px 8px;">Skip back / forward 2 seconds</td></tr>
+        <tr><td style="padding:4px 8px;"><kbd>[</kbd> / <kbd>]</kbd></td><td style="padding:4px 8px;">Slow down / speed up playback</td></tr>
+        <tr><td style="padding:4px 8px;"><kbd>1</kbd>–<kbd>9</kbd></td><td style="padding:4px 8px;">Select error type</td></tr>
+        <tr><td style="padding:4px 8px;"><kbd>Esc</kbd></td><td style="padding:4px 8px;">Cancel current annotation / close popup</td></tr>
+      </tbody>
+    </table>
+
+    <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Export Formats</h3>
+    <ul style="padding-left:22px;">
+      <li><strong>Export CSV</strong> — flat spreadsheet of error annotations only (no per-note onsets). Opens in Excel / Google Sheets.</li>
+      <li><strong>Export JSON</strong> — full session state: annotations + raw taps + assigned per-note onsets. Re-importable into the tool.</li>
+      <li><strong>Export Aligned JSON</strong> — per-score-note records with <code>passes: [{audio_t, pass_number, status}]</code>. This is the format downstream model training and evaluation expects.</li>
+    </ul>
+
+    <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Tips</h3>
+    <ul style="padding-left:22px;">
+      <li>Listen at <strong>normal speed first</strong> to get an overview, then at <strong>0.5×</strong> to catch subtle pitch errors.</li>
+      <li>Your work is <strong>auto-saved</strong> every 30 seconds. Closing the tab and reopening will offer to restore.</li>
+      <li>To <strong>edit or delete</strong> any annotation, click <em>Edit</em> / <em>Delete</em> in the annotation list at the bottom.</li>
+      <li>If you re-edit error annotations after running Tap-Align, the alignment is no longer in sync. Re-run Tap-Align to refresh.</li>
+      <li>Hover an annotation row to <strong>preview</strong> its location on the score; click the row to <strong>seek</strong> the audio playhead there.</li>
+    </ul>
+
+    <div style="margin-top:18px; padding-top:12px; border-top:1px solid #e5e7eb; text-align:right;">
+      <button id="btn-help-close-2" type="button" style="padding:8px 24px; background:#065f46; color:white; border:none; border-radius:8px; font-weight:600; font-size:14px; cursor:pointer;">Got it</button>
     </div>
   </div>
 </div>
@@ -1780,10 +1872,39 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ═══════════════════════════════════════════════════════
+// Help Modal
+// ═══════════════════════════════════════════════════════
+function showHelp() {
+  document.getElementById('help-overlay').style.display = 'flex';
+}
+function hideHelp() {
+  document.getElementById('help-overlay').style.display = 'none';
+  try { localStorage.setItem('violin_help_seen', '1'); } catch(e) {}
+}
+document.getElementById('btn-help').onclick = showHelp;
+document.getElementById('btn-help-close').onclick = hideHelp;
+document.getElementById('btn-help-close-2').onclick = hideHelp;
+// Click overlay (outside modal) to close
+document.getElementById('help-overlay').onclick = (e) => {
+  if (e.target.id === 'help-overlay') hideHelp();
+};
+// Esc to close help (only when help is open)
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('help-overlay').style.display === 'flex') {
+    e.preventDefault();
+    hideHelp();
+  }
+});
+
+// ═══════════════════════════════════════════════════════
 // Init
 // ═══════════════════════════════════════════════════════
 renderAnnotationList();
 loadFromLocalStorage();
+// Auto-show help on first visit
+try {
+  if (!localStorage.getItem('violin_help_seen')) showHelp();
+} catch(e) {}
 </script>
 </body>
 </html>
