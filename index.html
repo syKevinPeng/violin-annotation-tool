@@ -452,6 +452,11 @@
       </span>
     </label>
     <label>Notes: <input type="text" id="popup-notes" placeholder="Optional description" style="width:100%"></label>
+    <div class="popup-audio-row" style="display:flex; align-items:center; gap:8px; margin:10px 0; padding:8px 10px; background:#f9fafb; border:1px solid var(--line); border-radius:6px; font-size:13px;">
+      <span>Audio: <strong id="popup-audio-time" style="font-family:monospace">--:--</strong></span>
+      <button type="button" id="btn-popup-preview" style="font-size:12px; padding:3px 8px; border:1px solid var(--line); border-radius:4px; background:var(--panel); cursor:pointer;">▶ Preview 2s</button>
+      <button type="button" id="btn-popup-use-playhead" style="font-size:12px; padding:3px 8px; border:1px solid var(--line); border-radius:4px; background:var(--panel); cursor:pointer;">↻ Use current playhead</button>
+    </div>
     <div class="popup-actions">
       <button id="btn-popup-confirm">Confirm</button>
       <button id="btn-popup-cancel">Cancel</button>
@@ -769,6 +774,8 @@ function cancelAnnotation() {
   S.startIdx = null;
   S.endIdx = null;
   S.startAudioTime = null;
+  S.popupAudioTime = null;
+  clearTimeout(S._previewTimer);
   S.editingId = null;
   document.querySelectorAll('.err-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('btn-cancel').style.display = 'none';
@@ -785,8 +792,11 @@ function onNoteClicked(idx) {
 
   if (S.mode === 'select_start') {
     S.startIdx = idx;
-    // Stamp the audio playhead so we can seek back here later.
+    // Stamp the audio playhead so we can seek back here later, and
+    // auto-pause so the playhead doesn't drift past the error while the
+    // annotator finishes picking notes / filling the popup.
     S.startAudioTime = S.wavesurfer?.getCurrentTime?.() ?? null;
+    if (S.wavesurfer?.isPlaying?.()) S.wavesurfer.pause();
     highlightNoteTemp(idx, meta.color);
 
     if (meta.clicks === 1) {
@@ -841,6 +851,12 @@ function showDetailPopup() {
     b.classList.toggle('selected', b.dataset.sev === '2');
   });
   document.getElementById('popup-notes').value = '';
+
+  // Initialize the popup's audio-time control. For new annotations
+  // S.startAudioTime is the playhead at first-click; for Edits, the
+  // caller (editAnnotation) overwrites S.popupAudioTime afterwards.
+  S.popupAudioTime = S.startAudioTime;
+  updatePopupAudioDisplay();
 
   document.getElementById('popup-overlay').classList.add('visible');
 
@@ -938,6 +954,35 @@ document.querySelectorAll('.severity-btns button').forEach(btn => {
   });
 });
 
+// Popup audio-time controls
+function updatePopupAudioDisplay() {
+  const el = document.getElementById('popup-audio-time');
+  if (!el) return;
+  el.textContent = (S.popupAudioTime != null) ? fmtTime(S.popupAudioTime) : '--:--';
+}
+
+document.getElementById('btn-popup-use-playhead').onclick = () => {
+  const t = S.wavesurfer?.getCurrentTime?.();
+  if (t == null) return;
+  S.popupAudioTime = t;
+  updatePopupAudioDisplay();
+};
+
+document.getElementById('btn-popup-preview').onclick = () => {
+  if (!S.wavesurfer || S.popupAudioTime == null) return;
+  const t = Math.max(0, S.popupAudioTime);
+  if (typeof S.wavesurfer.setTime === 'function') S.wavesurfer.setTime(t);
+  else {
+    const dur = S.wavesurfer.getDuration?.() || 0;
+    if (dur > 0) S.wavesurfer.seekTo(t / dur);
+  }
+  S.wavesurfer.play();
+  clearTimeout(S._previewTimer);
+  S._previewTimer = setTimeout(() => {
+    if (S.wavesurfer?.isPlaying?.()) S.wavesurfer.pause();
+  }, 2000);
+};
+
 // Confirm
 document.getElementById('btn-popup-confirm').onclick = () => {
   const severity = parseInt(document.querySelector('.severity-btns button.selected')?.dataset.sev || '2');
@@ -949,6 +994,7 @@ document.getElementById('btn-popup-confirm').onclick = () => {
     if (ann) {
       ann.severity = severity;
       ann.notes = notes;
+      ann.audioTime = S.popupAudioTime ?? null;
       ann.extra = collectExtraFields(ann.type);
     }
     S.editingId = null;
@@ -965,7 +1011,7 @@ document.getElementById('btn-popup-confirm').onclick = () => {
       endPitch: S.noteIndex[S.endIdx].pitch,
       severity: severity,
       notes: notes,
-      audioTime: S.startAudioTime ?? null,
+      audioTime: S.popupAudioTime ?? null,
       extra: collectExtraFields(S.currentType),
     };
     S.annotations.push(ann);
@@ -1085,6 +1131,7 @@ window.editAnnotation = function(id) {
   S.currentType = ann.type;
   S.startIdx = ann.startIdx;
   S.endIdx = ann.endIdx;
+  S.startAudioTime = ann.audioTime ?? null;  // so showDetailPopup seeds the popup correctly
   S.mode = 'popup';
 
   showDetailPopup();
@@ -1092,6 +1139,8 @@ window.editAnnotation = function(id) {
   // Pre-fill existing values after popup renders
   setTimeout(() => {
     document.getElementById('popup-notes').value = ann.notes || '';
+    S.popupAudioTime = ann.audioTime ?? null;
+    updatePopupAudioDisplay();
     document.querySelectorAll('.severity-btns button').forEach(b => {
       b.classList.toggle('selected', b.dataset.sev === String(ann.severity));
     });
