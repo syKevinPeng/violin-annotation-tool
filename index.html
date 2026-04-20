@@ -1009,7 +1009,8 @@ function renderAnnotationList() {
     const loc = ann.startIdx === ann.endIdx
       ? escHtml(ann.startMeasureBeat)
       : `${escHtml(ann.startMeasureBeat)} → ${escHtml(ann.endMeasureBeat)}`;
-    return `<div class="ann-item" style="border-left-color:${meta.color}">
+    return `<div class="ann-item" data-id="${ann.id}" style="border-left-color:${meta.color}"
+      onmouseenter="previewAnnotation(${ann.id})" onmouseleave="clearAnnotationPreview()">
       <span class="ann-num" style="color:var(--muted);min-width:28px;font-size:11px;">#${i+1}</span>
       <span class="ann-type" style="color:${meta.color}">${escHtml(meta.label)}</span>
       <span class="ann-loc">${loc}</span>
@@ -1022,6 +1023,32 @@ function renderAnnotationList() {
     </div>`;
   }).join('');
 }
+
+window.previewAnnotation = function(id) {
+  const ann = S.annotations.find(a => a.id === id);
+  if (!ann) return;
+  // Use a dedicated class so we don't clobber an in-progress annotation
+  // (which uses .temp-highlight) or the persistent .ann-highlight overlays.
+  document.querySelectorAll('.preview-highlight').forEach(el => el.remove());
+  const meta = TYPE_META[ann.type];
+  const lo = Math.min(ann.startIdx, ann.endIdx);
+  const hi = Math.max(ann.startIdx, ann.endIdx);
+  let firstSvg = null;
+  for (let i = lo; i <= hi; i++) {
+    const note = S.noteIndex[i];
+    if (note?.svgEl) {
+      addHighlightRect(note.svgEl, meta.color, 0.55, 'preview-highlight');
+      if (!firstSvg) firstSvg = note.svgEl;
+    }
+  }
+  if (firstSvg?.scrollIntoView) {
+    firstSvg.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+};
+
+window.clearAnnotationPreview = function() {
+  document.querySelectorAll('.preview-highlight').forEach(el => el.remove());
+};
 
 window.deleteAnnotation = function(id) {
   if (!confirm('Delete this annotation?')) return;
