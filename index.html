@@ -1931,20 +1931,21 @@ function closeEditTapsModal(save) {
   // Re-assign onsets based on final taps
   S.noteOnsets = assignTapsToSequence(S.taps, S.playSequence, S.noteIndex);
   saveToLocalStorage();
-  // If tap-align is currently active, refresh its display + highlights.
+  // Rebuild recorded-tap (green) highlights from scratch to match current taps.
+  // Do this regardless of whether tap-align is currently active, so Clear All
+  // or deletions visibly remove the highlights on the score.
+  clearRecordedTapHighlights();
+  for (let k = 0; k < Math.min(S.taps.length, S.playSequence.length); k++) {
+    const r = S.playSequence[k];
+    const note = S.noteIndex[r.score_idx];
+    if (note?.svgEl) {
+      const opacity = r.pass_number > 1 ? 0.55 : 0.32;
+      addHighlightRect(note.svgEl, '#10b981', opacity, 'tap-recorded-highlight');
+    }
+  }
   if (S.mode === 'tap_align') {
     updateTapAlignDisplay();
     highlightExpectedNote();
-    // Rebuild recorded-tap highlights from scratch to match current taps.
-    clearRecordedTapHighlights();
-    for (let k = 0; k < Math.min(S.taps.length, S.playSequence.length); k++) {
-      const r = S.playSequence[k];
-      const note = S.noteIndex[r.score_idx];
-      if (note?.svgEl) {
-        const opacity = r.pass_number > 1 ? 0.55 : 0.32;
-        addHighlightRect(note.svgEl, '#10b981', opacity, 'tap-recorded-highlight');
-      }
-    }
   }
   renderAnnotationList();
   document.getElementById('edit-taps-overlay').style.display = 'none';
