@@ -512,7 +512,8 @@
         <input type="number" id="snap-window-ms" value="150" min="20" max="500" step="10" style="width:56px; padding:2px 4px; border:1px solid #d1d5db; border-radius:4px; font-size:11px;">
       </label>
       <button id="btn-edit-taps-clear-all" type="button" title="Delete every recorded tap" style="padding:6px 12px; border:1px solid #fecaca; border-radius:6px; background:#fef2f2; color:#991b1b; cursor:pointer; font-size:12px;">🗑 Clear All</button>
-      <span style="color:#64748b; font-size:12px; flex:1; min-width:160px;">Cancel reverts all changes since opening.</span>
+      <span style="color:#64748b; font-size:12px; flex:1; min-width:140px;">Cancel reverts all changes since opening.</span>
+      <button id="btn-edit-taps-export" type="button" title="Save current taps + download per-note Aligned JSON for downstream use" style="padding:8px 16px; background:#ecfeff; color:#0e7490; border:1px solid #06b6d4; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer;">↓ Save & Export Aligned JSON</button>
       <button id="btn-edit-taps-cancel" type="button" style="padding:8px 20px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer; font-size:13px;">Cancel</button>
       <button id="btn-edit-taps-save" type="button" style="padding:8px 20px; background:#065f46; color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer;">Save</button>
     </div>
@@ -969,7 +970,8 @@ function cancelAnnotation() {
 
 function onNoteClicked(idx) {
   // Review-mode click: when we're not marking an error and not in tap-align,
-  // clicking a note seeks audio to that note's tap time (if any).
+  // clicking a note seeks the audio playhead to that note's tap time (if any).
+  // Does NOT auto-play — press Space to start playback if you want to hear it.
   if (!S.mode) {
     const onsets = S.noteOnsets?.[idx];
     const first = onsets && onsets.find(p => p.audio_t != null);
@@ -980,7 +982,6 @@ function onNoteClicked(idx) {
         const dur = S.wavesurfer.getDuration?.() || 0;
         if (dur > 0) S.wavesurfer.seekTo(t / dur);
       }
-      if (!S.wavesurfer.isPlaying?.()) S.wavesurfer.play?.();
     }
     return;
   }
@@ -1451,7 +1452,7 @@ document.getElementById('btn-export-json').onclick = () => {
 };
 
 // Aligned-JSON export: per-note records, ready for downstream model training/eval.
-document.getElementById('btn-export-aligned').onclick = () => {
+function exportAlignedJSON() {
   if (Object.keys(S.noteOnsets).length === 0) {
     if (!confirm('No tap-align data yet. Export will only contain score notes with status=unaligned. Continue?')) return;
   }
@@ -1481,7 +1482,8 @@ document.getElementById('btn-export-aligned').onclick = () => {
     annotations: S.annotations,   // original error annotations for traceability
   };
   downloadFile(JSON.stringify(data, null, 2), `aligned_${S.audioFilename.replace(/\.\w+$/,'')}.json`, 'application/json');
-};
+}
+document.getElementById('btn-export-aligned').onclick = exportAlignedJSON;
 
 document.getElementById('btn-tap-align').onclick = () => {
   if (S.mode === 'tap_align') {
@@ -1974,32 +1976,37 @@ function openEditTapsModal() {
 }
 
 function closeEditTapsModal(save) {
+  const taps_changed = save
+    ? JSON.stringify(S.taps) !== JSON.stringify(_editTapsSnapshot)
+    : false;
   if (!save) {
-    // Revert
+    // Revert in-memory tap state. noteOnsets / highlights were never
+    // mutated during the modal session, so no rebuild needed.
     S.taps = _editTapsSnapshot || [];
   }
   _editTapsSnapshot = null;
-  // Re-assign onsets based on final taps
-  S.noteOnsets = assignTapsToSequence(S.taps, S.playSequence, S.noteIndex);
-  bumpNoteOnsetsStamp();
-  saveToLocalStorage();
-  // Rebuild recorded-tap (green) highlights from scratch to match current taps.
-  // Do this regardless of whether tap-align is currently active, so Clear All
-  // or deletions visibly remove the highlights on the score.
-  clearRecordedTapHighlights();
-  for (let k = 0; k < Math.min(S.taps.length, S.playSequence.length); k++) {
-    const r = S.playSequence[k];
-    const note = S.noteIndex[r.score_idx];
-    if (note?.svgEl) {
-      const opacity = r.pass_number > 1 ? 0.55 : 0.32;
-      addHighlightRect(note.svgEl, '#10b981', opacity, 'tap-recorded-highlight');
+
+  if (save && taps_changed) {
+    S.noteOnsets = assignTapsToSequence(S.taps, S.playSequence, S.noteIndex);
+    bumpNoteOnsetsStamp();
+    saveToLocalStorage();
+    // Rebuild recorded-tap (green) highlights to match the new tap set.
+    clearRecordedTapHighlights();
+    for (let k = 0; k < Math.min(S.taps.length, S.playSequence.length); k++) {
+      const r = S.playSequence[k];
+      const note = S.noteIndex[r.score_idx];
+      if (note?.svgEl) {
+        const opacity = r.pass_number > 1 ? 0.55 : 0.32;
+        addHighlightRect(note.svgEl, '#10b981', opacity, 'tap-recorded-highlight');
+      }
     }
+    if (S.mode === 'tap_align') {
+      updateTapAlignDisplay();
+      highlightExpectedNote();
+    }
+    renderAnnotationList();
   }
-  if (S.mode === 'tap_align') {
-    updateTapAlignDisplay();
-    highlightExpectedNote();
-  }
-  renderAnnotationList();
+
   document.getElementById('edit-taps-overlay').style.display = 'none';
   _editTapsCurrentRow = null;
 }
@@ -2284,6 +2291,11 @@ document.getElementById('btn-edit-taps-save').onclick = () => closeEditTapsModal
 document.getElementById('btn-edit-taps-insert-top').onclick = insertTapAtTop;
 document.getElementById('btn-edit-taps-clear-all').onclick = clearAllTaps;
 document.getElementById('btn-edit-taps-snap').onclick = snapTapsToOnsets;
+document.getElementById('btn-edit-taps-export').onclick = () => {
+  // Save first so any pending edits are committed, then trigger export.
+  closeEditTapsModal(true);
+  exportAlignedJSON();
+};
 document.getElementById('btn-edit-taps-play').onclick = () => {
   if (!S.wavesurfer) return;
   S.wavesurfer.playPause();
