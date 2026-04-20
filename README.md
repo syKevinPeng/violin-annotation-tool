@@ -130,6 +130,17 @@ All processing happens in your browser. No audio or score data is uploaded anywh
 - Audio files in WAV, MP3, OGG, or FLAC format
 - Score files in MusicXML format (.xml, .musicxml, or .mxl)
 
+## For developers
+
+The pure-function core (play-sequence builder, tap assignment, expected-count calculator, onset-peak finder, etc.) lives in `lib/core.js` and is unit-tested under `tests/`.
+
+```bash
+# Requires Node 18+
+npm test
+```
+
+The same `lib/core.js` is loaded by the browser tool via a `<script src="lib/core.js">` tag and exposed as `window.AnnoCore`. UMD wrapper means it works in both contexts without a build step.
+
 ## Aligned JSON schema (v2)
 
 ```json

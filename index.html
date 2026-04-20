@@ -6,6 +6,7 @@
   <title>Violin Error Annotation Tool</title>
   <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.9.2/build/opensheetmusicdisplay.min.js"></script>
   <script src="https://unpkg.com/wavesurfer.js@7"></script>
+  <script src="lib/core.js"></script>
   <style>
     :root {
       --bg: #f4f1ea;
@@ -1245,15 +1246,10 @@ function renderAnnotationList() {
   }).join('');
 }
 
-// Resolve audio time for an annotation: prefer Tap-Align onset of the
-// start note; fall back to any legacy `audioTime` field (back-compat).
+// Resolve audio time for an annotation: thin wrapper around the pure
+// AnnoCore.audioTimeForAnnotation, sourcing noteOnsets from S.
 function audioTimeForAnnotation(ann) {
-  const onsets = S.noteOnsets?.[ann.startIdx];
-  if (onsets) {
-    const first = onsets.find(p => p.audio_t != null);
-    if (first) return first.audio_t;
-  }
-  return ann.audioTime != null ? ann.audioTime : null;
+  return _audioTimeForAnnotationCore(ann, S.noteOnsets);
 }
 
 window.previewAnnotation = function(id) {
@@ -1641,228 +1637,19 @@ setInterval(saveToLocalStorage, 30000);
 // Tap-Align Mode (v2)
 // ═══════════════════════════════════════════════════════
 
-// Per-note labels that DON'T change cardinality of the play sequence.
-// (Span-based & single-note errors that only affect status, not order.)
-const PER_NOTE_LABEL_TYPES = new Set([
-  'wrong_note', 'intonation', 'pause', 'tempo_drift', 'early_late_entry'
-]);
+// Pure-function core is loaded via lib/core.js (window.AnnoCore).
+// Locally bind the names used in this script.
+const PER_NOTE_LABEL_TYPES         = AnnoCore.PER_NOTE_LABEL_TYPES;
+const buildPlaySequence            = AnnoCore.buildPlaySequence;
+const assignTapsToSequence         = AnnoCore.assignTapsToSequence;
+const computeExpectedTapCount      = AnnoCore.computeExpectedTapCount;
+const findPeakInWindow             = AnnoCore.findPeakInWindow;
+const _audioTimeForAnnotationCore  = AnnoCore.audioTimeForAnnotation;
+const insertTapInOrder             = AnnoCore.insertTapInOrder;
 
-/**
- * Build the expected audio→score play sequence by walking the score
- * and applying error annotations as edits. Returns an array of
- * { score_idx, pass_number, status } records, one per expected audio onset.
- *
- * Skips produce no records (those score notes are unaligned).
- * Repetitions emit the span k times with appropriate clean/repetition labels.
- * Note-swaps emit the second clicked note before the first.
- * Stopped+restart emits notes up to stop, then jumps back and replays.
- *
- * Single-note error labels (wrong_note, intonation, etc.) are applied as
- * status overlays in the relevant pass.
- */
-function buildPlaySequence(noteIndex, annotations) {
-  const N = noteIndex.length;
-  const seq = [];
-  const passCounter = new Array(N).fill(0);
-
-  // Index annotations by their starting score index for fast lookup.
-  const byStart = new Map();           // startIdx -> [annotation, ...]
-  const byNote = [];                   // score_idx -> [annotation, ...] (covers any note in span)
-  for (let i = 0; i < N; i++) byNote.push([]);
-  for (const a of annotations) {
-    if (!byStart.has(a.startIdx)) byStart.set(a.startIdx, []);
-    byStart.get(a.startIdx).push(a);
-    const lo = Math.min(a.startIdx, a.endIdx);
-    const hi = Math.max(a.startIdx, a.endIdx);
-    for (let i = lo; i <= hi; i++) byNote[i].push(a);
-  }
-
-  function statusForNote(idx, defaultStatus = 'clean') {
-    // First non-structural annotation covering this note wins.
-    for (const a of byNote[idx]) {
-      if (PER_NOTE_LABEL_TYPES.has(a.type)) return a.type;
-    }
-    return defaultStatus;
-  }
-
-  let i = 0;
-  while (i < N) {
-    const here = byStart.get(i) || [];
-
-    // Structural priority: skip > stopped_restart > repetition > note_swap.
-    const skip = here.find(a => a.type === 'skip');
-    if (skip) {
-      // Skipped notes produce no audio onset → no entries in seq.
-      // assignTapsToSequence later marks them with status='skipped'.
-      i = skip.endIdx + 1;
-      continue;
-    }
-
-    const sr = here.find(a => a.type === 'stopped_restart');
-    if (sr) {
-      // Play forward to stop, then jump back to restart and continue.
-      // Convention: startIdx=stop, endIdx=restart (annotator clicks stop first, then restart-from).
-      const stopIdx = sr.startIdx;
-      const restartIdx = sr.endIdx;
-      // Pass 1: play this note then stop
-      passCounter[stopIdx]++;
-      seq.push({ score_idx: stopIdx, pass_number: passCounter[stopIdx], status: statusForNote(stopIdx, 'stopped_restart') });
-      // Pass 2: jump back to restart and continue from there
-      let j = restartIdx;
-      // Continue normal iteration from restart
-      while (j <= stopIdx) {
-        passCounter[j]++;
-        seq.push({ score_idx: j, pass_number: passCounter[j], status: statusForNote(j, passCounter[j] > 1 ? 'stopped_restart' : 'clean') });
-        j++;
-      }
-      i = stopIdx + 1;
-      continue;
-    }
-
-    const rep = here.find(a => a.type === 'repetition');
-    if (rep) {
-      const times = parseInt(rep.extra?.times_played) || 2;
-      const trigger = rep.extra?.trigger || 'clean';
-      // Label rule:
-      //   clean trigger:      pass 1 = statusForNote (preserves any underlying error);
-      //                       passes 2..k = 'repetition' (the spurious extra plays).
-      //   corrective trigger: passes 1..(k-1) = statusForNote (the mistake);
-      //                       pass k         = 'clean' (forced — the corrected take).
-      for (let pass = 1; pass <= times; pass++) {
-        for (let j = rep.startIdx; j <= rep.endIdx; j++) {
-          passCounter[j]++;
-          let status;
-          if (trigger === 'clean') {
-            status = (pass === 1) ? statusForNote(j, 'clean') : 'repetition';
-          } else { // corrective
-            status = (pass === times) ? 'clean' : statusForNote(j, 'clean');
-          }
-          seq.push({ score_idx: j, pass_number: passCounter[j], status });
-        }
-      }
-      i = rep.endIdx + 1;
-      continue;
-    }
-
-    const swap = here.find(a => a.type === 'note_swap');
-    if (swap && swap.startIdx !== swap.endIdx) {
-      // Audio order is reversed: emit endIdx first, then startIdx.
-      passCounter[swap.endIdx]++;
-      seq.push({ score_idx: swap.endIdx, pass_number: passCounter[swap.endIdx], status: 'note_swap' });
-      passCounter[swap.startIdx]++;
-      seq.push({ score_idx: swap.startIdx, pass_number: passCounter[swap.startIdx], status: 'note_swap' });
-      i = swap.endIdx + 1;
-      continue;
-    }
-
-    // Default: emit one record for this note.
-    passCounter[i]++;
-    seq.push({ score_idx: i, pass_number: passCounter[i], status: statusForNote(i, 'clean') });
-    i++;
-  }
-
-  return seq;
-}
-
-/** Assign tap times to the play sequence. Returns noteOnsets map.
- *
- * Status semantics for the exported per-note records:
- *   'skipped'   — note is in the score but not in the play sequence (annotator marked a `skip`)
- *   'untapped'  — note is in the play sequence but the annotator didn't tap it (e.g. tap-align ended early)
- *   anything else — see playSequence record's `status` (clean / wrong_note / repetition / ...)
- */
-function assignTapsToSequence(taps, seq, noteIndex) {
-  const onsets = {};
-  const seqIdxSet = new Set(seq.map(r => r.score_idx));
-  for (let i = 0; i < noteIndex.length; i++) {
-    if (!seqIdxSet.has(i)) {
-      onsets[i] = [{ audio_t: null, pass_number: 1, status: 'skipped' }];
-    } else {
-      onsets[i] = [];
-    }
-  }
-  const M = Math.min(taps.length, seq.length);
-  for (let k = 0; k < M; k++) {
-    const r = seq[k];
-    onsets[r.score_idx].push({
-      audio_t: taps[k].audio_t,
-      pass_number: r.pass_number,
-      status: r.status,
-    });
-  }
-  // For sequence entries past the last tap, mark the corresponding score
-  // note as 'untapped' so downstream consumers can distinguish "annotator
-  // didn't tap" from "deliberately skipped".
-  for (let k = M; k < seq.length; k++) {
-    const r = seq[k];
-    onsets[r.score_idx].push({
-      audio_t: null,
-      pass_number: r.pass_number,
-      status: 'untapped',
-    });
-  }
-  return onsets;
-}
-
-/**
- * Compute the expected tap count from the score + error annotations,
- * with a per-error-type breakdown. Returns:
- *   { N, expected, breakdown: [{type, ann_id, span, contribution, detail}], errors_by_type: {type: count} }
- */
-function computeExpectedTapCount(noteIndex, annotations) {
-  const N = noteIndex.length;
-  const breakdown = [];
-  const errorsByType = {};
-  let delta = 0; // net change vs N
-
-  for (const a of annotations) {
-    errorsByType[a.type] = (errorsByType[a.type] || 0) + 1;
-    const lo = Math.min(a.startIdx, a.endIdx);
-    const hi = Math.max(a.startIdx, a.endIdx);
-    const len = hi - lo + 1;
-    let contribution = 0;
-    let detail = '';
-    switch (a.type) {
-      case 'skip':
-        contribution = -len;
-        detail = `removes ${len} note${len === 1 ? '' : 's'} from sequence`;
-        break;
-      case 'repetition': {
-        const k = parseInt(a.extra?.times_played) || 2;
-        contribution = (k - 1) * len;
-        const trigger = a.extra?.trigger || 'clean';
-        detail = `${k}× of ${len} note${len === 1 ? '' : 's'} (${trigger}) → +${contribution}`;
-        break;
-      }
-      case 'stopped_restart': {
-        // startIdx = stop, endIdx = restart (restart is earlier)
-        const stop = a.startIdx, restart = a.endIdx;
-        const replay = stop - restart + 1;
-        contribution = replay > 0 ? replay : 0;
-        detail = `replays notes ${restart}–${stop} → +${contribution}`;
-        break;
-      }
-      case 'note_swap':
-        contribution = 0;
-        detail = `reorders 2 notes, no count change`;
-        break;
-      default:
-        // wrong_note, intonation, pause, tempo_drift, early_late_entry: per-note labels, no cardinality change
-        contribution = 0;
-        detail = `per-note label, no count change`;
-    }
-    delta += contribution;
-    breakdown.push({
-      type: a.type,
-      ann_id: a.id,
-      span: a.startIdx === a.endIdx ? `note ${a.startIdx}` : `notes ${lo}–${hi}`,
-      contribution,
-      detail,
-    });
-  }
-
-  return { N, expected: N + delta, delta, breakdown, errorsByType };
-}
+// buildPlaySequence / assignTapsToSequence / computeExpectedTapCount
+// extracted to lib/core.js (window.AnnoCore). See top of this section
+// for the local bindings + tests at tests/core.test.js.
 
 function showCountsModal() {
   const summary = computeExpectedTapCount(S.noteIndex, S.annotations);
@@ -2143,20 +1930,13 @@ function insertTapAtTop() {
 }
 
 /** Insert a new tap at the current playhead, placed in chronological
- *  order so the table stays sorted. Returns the index it was inserted at. */
+ *  order so the table stays sorted. Returns the index it was inserted at.
+ *  Thin shell around AnnoCore.insertTapInOrder. */
 function recordTapAtCurrentTime() {
   if (!S.wavesurfer) return -1;
   const t = S.wavesurfer.getCurrentTime?.();
   if (t == null) return -1;
-  // Binary search for the first index i with audio_t > t.
-  let lo = 0, hi = S.taps.length;
-  while (lo < hi) {
-    const m = (lo + hi) >> 1;
-    const tt = S.taps[m].audio_t;
-    if (tt == null || tt > t) hi = m; else lo = m + 1;
-  }
-  S.taps.splice(lo, 0, { audio_t: t });
-  return lo;
+  return insertTapInOrder(S.taps, t);
 }
 
 function flashTapRow(i) {
@@ -2228,26 +2008,7 @@ function ensureOnsetEnvelope() {
   return _onsetEnvelope;
 }
 
-/** Find the time of the peak novelty value within [centerT ± radiusS].
- *  Returns null if no frames fall in the window. Optionally requires the
- *  result to be strictly greater than minT. */
-function findPeakInWindow(env, centerT, radiusS, minT = -Infinity) {
-  const { times, novelty } = env;
-  const lo = centerT - radiusS;
-  const hi = centerT + radiusS;
-  // Binary search for the first index with time >= lo.
-  let a = 0, b = times.length - 1, start = times.length;
-  while (a <= b) {
-    const m = (a + b) >> 1;
-    if (times[m] >= lo) { start = m; b = m - 1; } else { a = m + 1; }
-  }
-  let bestI = -1, bestV = -Infinity;
-  for (let i = start; i < times.length && times[i] <= hi; i++) {
-    if (times[i] <= minT) continue;
-    if (novelty[i] > bestV) { bestV = novelty[i]; bestI = i; }
-  }
-  return bestI < 0 ? null : times[bestI];
-}
+// findPeakInWindow extracted to lib/core.js.
 
 function snapTapsToOnsets() {
   if (S.taps.length === 0) { alert('No taps to snap.'); return; }
