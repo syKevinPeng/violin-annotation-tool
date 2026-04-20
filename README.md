@@ -9,9 +9,12 @@ A browser-based tool for annotating performance errors in student violin recordi
 3. Load the **MusicXML score** for the piece being performed
 4. Enter your **name** in the Annotator field
 5. Annotate in **two passes**:
-   - **Pass 1 — Errors:** mark each error type as you hear it (see below)
-   - **Pass 2 — Tap-Align:** click "🎵 Tap-Align" and tap SPACE on each note onset
-6. Click **Export Aligned JSON** when done
+   - **Pass A — Errors:** mark each error as you hear it (see below)
+   - **Pass B — Tap-Align:** click "🎵 Tap-Align" and tap SPACE on each note onset
+6. **Review & refine** (optional): open ✎ Edit Taps to nudge individual timings or run 🪄 Snap to Onsets to auto-align to waveform peaks
+7. Click **↓ Save & Export Aligned JSON** when done
+
+> New to the tool? Click **? Help** in the top-right for the full in-app guide (auto-shows on first visit).
 
 ## How to Annotate
 
@@ -66,15 +69,74 @@ While Tap-Align is active:
 | **P** | Play / pause audio (Space is now Tap) |
 | **Esc** | End Tap-Align (saves your taps) |
 
-The next-expected score note is highlighted in blue, and a counter shows `Tap N / M`. When you stop, the tool reports any mismatch between recorded and expected tap counts — a mismatch usually means a missed error annotation or a missed tap.
+The next-expected score note is highlighted in blue, and a counter + progress bar show `Tap N / M (X%)`. When you stop, the tool reports any mismatch between recorded and expected tap counts — a mismatch usually means a missed error annotation or a missed tap.
 
-### Step 5: Export
+**During Tap-Align you'll see:**
+- Tapped notes get a persistent **green highlight** (darker for repeated passes)
+- A horizontal **progress bar** above the score fills as you tap
+- Backspace removes the most recent green highlight in sync
+
+### After Tap-Align: review your alignment
+
+The score and audio stay in sync during normal playback:
+- **Green highlights** persist on every tapped score note; repeated passes stack darker
+- As audio plays, the **currently-sounding** note gets a **yellow glow** that bounces along the score
+- **Click any score note** (outside Tap-Align / error-marking) to seek the playhead to that note's tap time. Press Space to start playback if you want to hear it.
+
+### Step 5 (optional): Sanity-check your counts — 🔍 Check Counts
+
+Click **🔍 Check Counts** any time to open a modal that shows how the expected tap count is derived from your error annotations:
+
+```
+expected = N − Σ skip_lengths
+             + Σ (times_played − 1) × rep_length
+             + Σ stopped_restart_replays
+```
+
+Per-annotation contribution is listed row-by-row. Run before Tap-Align to catch missing error labels, and after to confirm counts match.
+
+### Step 6 (optional): Review & refine — ✎ Edit Taps
+
+Open the **✎ Edit Taps** panel for a spreadsheet-style view of every recorded tap. The panel is **non-blocking** — audio controls and the score stay clickable behind it, so you can listen while you edit.
+
+| Column | Meaning |
+|---|---|
+| `#` | Tap index (1-based) |
+| `time (s)` | Audio time — editable number input |
+| `score note` | Which score note this tap maps to (derived from the play sequence) |
+| `pass` | 1, 2, ... for repeated passes |
+| `status` | `clean`, `wrong_note`, `intonation`, `repetition`, `untapped`, etc. |
+| `actions` | `−50ms` / `+50ms` nudge · `▶` seek · `＋` insert-after · `🗑` delete |
+
+Inside the panel:
+
+| Key | Action |
+|---|---|
+| **Space** | Record a new tap at the current playhead (inserted in chronological order; row flashes green) |
+| **P** | Play / pause audio |
+
+While playing, the row that corresponds to the current playhead is highlighted yellow in sync with the score's yellow follow-highlight — so you can watch both advance together.
+
+Footer buttons: **+ Insert at top**, **🗑 Clear All**, **↓ Save & Export Aligned JSON**, **Cancel** (reverts all edits since open), **Save**.
+
+### Step 7 (optional): Auto-refine with 🪄 Snap to Onsets
+
+Inside the Edit Taps panel, click **🪄 Snap to Onsets** to move every tap to the nearest amplitude-onset peak within a configurable window (default ±150 ms). Compensates for the 80–150 ms latency/jitter of human tap inputs.
+
+- Adjustable `window (ms)` input (20–500)
+- Monotonicity-preserving (no two taps collide)
+- Affected rows flash in sequence after the operation
+- A summary reports `Snapped: N · Unchanged: M · Avg shift: X ms · Max shift: Y ms`
+- Cancel reverts if the result overshoots
+
+### Step 8: Export
 
 | Button | What it gives you |
 |---|---|
-| **Export CSV** | Spreadsheet of error annotations only (no per-note onsets) |
-| **Export JSON** | Original annotations + raw taps + per-note onsets in one blob |
+| **Export CSV** | Spreadsheet of error annotations (with `start_audio_t` / `end_audio_t` once Tap-Align has run) |
+| **Export JSON** | Original annotations + raw taps + per-note onsets in one blob (re-importable) |
 | **Export Aligned JSON** | **One record per score note**, with `passes: [{audio_t, pass_number, status}]`. This is the format downstream model training/eval expects. |
+| **↓ Save & Export Aligned JSON** (inside Edit Taps panel) | One-click commit + download |
 
 ### Repetition trigger field (important)
 
@@ -116,9 +178,12 @@ Use the **Speed** dropdown to slow playback to 0.25x for catching subtle errors.
 ## Tips
 
 - Listen at **normal speed first** to get an overview, then at **0.5x** to catch details
-- Your work is **auto-saved** in the browser — if you accidentally close the tab, it will offer to restore when you reopen
+- Your work is **auto-saved** every 30 seconds — if you accidentally close the tab, it will offer to restore when you reopen
 - You can **edit** or **delete** any annotation from the list at the bottom
 - You can **import** a previously exported file to continue annotating
+- **Click an annotation row** to seek the playhead to that error (after Tap-Align)
+- If you re-edit error annotations after running Tap-Align, the alignment is no longer in sync — re-run Tap-Align to refresh the per-note mapping
+- **🪄 Snap to Onsets** is your friend: do a rough tap pass at normal speed, then snap to refine. Much faster than tapping precisely
 
 ## Privacy
 

@@ -546,9 +546,11 @@
     <h3 style="font-size:15px; margin-top:14px; color:#0e7490;">Workflow Overview</h3>
     <ol style="padding-left:22px; margin-top:6px;">
       <li><strong>Load files</strong> — student audio (WAV/MP3/OGG/FLAC) + score (MusicXML).</li>
-      <li><strong>Listen and mark errors</strong> — click an error type (or press <kbd>1</kbd>–<kbd>9</kbd>), then click the affected note(s) in the score. A popup will ask for severity and any extra detail.</li>
-      <li><strong>Run Tap-Align</strong> — click <strong>🎵 Tap-Align</strong> in the toolbar. Audio plays from the start; press <kbd>Space</kbd> on every note onset you hear. The tool uses your error annotations to map taps to score notes automatically.</li>
-      <li><strong>Export Aligned JSON</strong> — gives you a per-note record with audio onset times and status labels, ready for downstream model training/eval.</li>
+      <li><strong>Pass A — Mark errors</strong>: click an error type (or press <kbd>1</kbd>–<kbd>9</kbd>), then click the affected note(s). A popup asks for severity and any extras.</li>
+      <li><strong>Optional — 🔍 Check Counts</strong>: opens a modal that shows the expected tap count derived from your error annotations. Catches missing error labels before you waste time tapping.</li>
+      <li><strong>Pass B — 🎵 Tap-Align</strong>: click the button. Audio plays from the start; press <kbd>Space</kbd> on every note onset you hear. Errors declared in Pass A drive the tap→score mapping automatically.</li>
+      <li><strong>Review &amp; refine</strong>: click any note on the score to seek audio there; open <strong>✎ Edit Taps</strong> to nudge individual taps or run <strong>🪄 Snap to Onsets</strong> to auto-refine timing to waveform peaks.</li>
+      <li><strong>Export Aligned JSON</strong> — per-note record with audio onset times + status labels, ready for downstream model training/eval.</li>
     </ol>
 
     <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Error Types</h3>
@@ -590,6 +592,43 @@
     </ul>
     <p>If a corrective repeat fixed an underlying error (e.g., a wrong note), mark that error <em>separately</em> as a normal annotation at its score location. The tool composes them automatically.</p>
 
+    <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">🔍 Check Counts (sanity check)</h3>
+    <p>Click <strong>🔍 Check Counts</strong> in the toolbar at any time. A modal shows how the expected tap count is derived from the score + your error annotations:</p>
+    <p style="background:#f9fafb; padding:8px; border-radius:4px; font-family:monospace; font-size:12px;">expected = N − Σ skip_lengths + Σ (times_played − 1) × rep_length + Σ stopped_restart_replays</p>
+    <p>After Tap-Align finishes, the modal compares expected vs recorded taps and highlights any mismatch — usually a missed error label or a missed/extra tap. Per-annotation contribution is shown row-by-row (e.g. <em>"repetition (notes 5–8) — 2× of 4 notes (clean) → +4"</em>).</p>
+
+    <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">✎ Edit Taps panel</h3>
+    <p>After Tap-Align, open the <strong>✎ Edit Taps</strong> panel to review and refine each tap. The panel is <em>non-blocking</em> — audio controls and the score stay clickable behind it, so you can listen while editing.</p>
+    <p>Each row shows: <code>#</code> · editable time (s) · mapped score note · pass · status · actions. Controls per row:</p>
+    <ul style="padding-left:22px;">
+      <li><strong>−50ms / +50ms</strong> — nudge audio time</li>
+      <li><strong>▶</strong> — seek the playhead to this tap's time</li>
+      <li><strong>＋</strong> — insert a new tap after this one (shifts subsequent taps down in mapping)</li>
+      <li><strong>🗑</strong> — delete this tap (shifts subsequent taps up)</li>
+      <li>Or type an exact time directly in the number field</li>
+    </ul>
+    <p>Global actions in the footer: <strong>+ Insert at top</strong>, <strong>🗑 Clear All</strong>, <strong>↓ Save &amp; Export Aligned JSON</strong>. A snapshot is taken when you open the panel — <strong>Cancel</strong> reverts all edits, <strong>Save</strong> commits them.</p>
+    <p><strong>Inside the panel:</strong></p>
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px;">
+      <thead><tr style="background:#f3f4f6; text-align:left;"><th style="padding:5px 8px;">Key</th><th style="padding:5px 8px;">Action</th></tr></thead>
+      <tbody>
+        <tr><td style="padding:4px 8px;"><kbd>Space</kbd></td><td style="padding:4px 8px;">Record a new tap at the current playhead (inserted in chronological order; row flashes green)</td></tr>
+        <tr><td style="padding:4px 8px;"><kbd>P</kbd></td><td style="padding:4px 8px;">Play / pause audio (Space is Tap in this context)</td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:8px;">While audio plays, the current row is highlighted yellow in sync with the playhead — so you can watch the table advance as you listen.</p>
+
+    <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">🪄 Snap to Onsets (auto-refine)</h3>
+    <p>Inside the Edit Taps panel, click <strong>🪄 Snap to Onsets</strong> to move every tap to the nearest amplitude-onset peak within a configurable window (default ±150&nbsp;ms). Compensates for the 80–150&nbsp;ms latency/jitter of human tap inputs. After running, the affected rows flash in sequence and a summary shows avg/max shift. Cancel reverts if the result overshoots.</p>
+
+    <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Review your alignment (follow highlight)</h3>
+    <p>After Tap-Align, the score and audio stay in sync during playback:</p>
+    <ul style="padding-left:22px;">
+      <li><strong>Green highlights</strong> persist on every tapped score note; repeated passes stack darker.</li>
+      <li>As audio plays, the <strong>currently-sounding</strong> note gets a <span style="color:#f59e0b; font-weight:600;">yellow glow</span> that bounces along the score.</li>
+      <li><strong>Click any score note</strong> (outside tap-align / error-marking) to seek the playhead to that note's tap time. Press <kbd>Space</kbd> to start playback if you want to hear it.</li>
+    </ul>
+
     <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Playback Shortcuts (outside Tap-Align mode)</h3>
     <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px;">
       <thead><tr style="background:#f3f4f6; text-align:left;"><th style="padding:5px 8px;">Key</th><th style="padding:5px 8px;">Action</th></tr></thead>
@@ -604,9 +643,10 @@
 
     <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Export Formats</h3>
     <ul style="padding-left:22px;">
-      <li><strong>Export CSV</strong> — flat spreadsheet of error annotations only (no per-note onsets). Opens in Excel / Google Sheets.</li>
+      <li><strong>Export CSV</strong> — flat spreadsheet of error annotations (columns include <code>start_audio_t</code> / <code>end_audio_t</code> once Tap-Align has run). Opens in Excel / Google Sheets.</li>
       <li><strong>Export JSON</strong> — full session state: annotations + raw taps + assigned per-note onsets. Re-importable into the tool.</li>
       <li><strong>Export Aligned JSON</strong> — per-score-note records with <code>passes: [{audio_t, pass_number, status}]</code>. This is the format downstream model training and evaluation expects.</li>
+      <li><strong>↓ Save &amp; Export Aligned JSON</strong> (inside the Edit Taps panel) — one-click commit + download.</li>
     </ul>
 
     <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Tips</h3>
