@@ -637,28 +637,91 @@
 
 <script>
 // ═══════════════════════════════════════════════════════
-// State
+// CONFIG — tunable constants in one place
 // ═══════════════════════════════════════════════════════
-const S = {
+const CONFIG = {
+  // Tap-align UI
+  tapNudgeStepS:        0.05,    // ± step on the −50ms / +50ms buttons
+  newTapDefaultGapS:    0.10,    // default time when inserting a tap with no neighbour
+  flashRowMs:           950,     // how long the green ring stays on a newly-inserted tap row
+  // Snap-to-onsets
+  snapDefaultWindowMs:  150,
+  snapMonotonicEpsS:    0.005,   // min separation between consecutive snapped taps
+  // Onset envelope (RMS-based novelty)
+  rmsHopS:              0.010,   // ~10ms hops
+  rmsWinHopMultiplier:  2,       // window length = hop × this
+  // Audio engine
+  audioSampleRate:      22050,   // canonical sample rate for OSMD score frames
+  // Highlights / opacity
+  recordedTapAlphaPass1: 0.32,
+  recordedTapAlphaPassN: 0.55,
+  // Help modal auto-show
+  helpFirstVisitKey:    'violin_help_seen',
+  // localStorage key
+  storageKey:           'violin_annotations',
+};
+
+const SCHEMA_VERSION = 2;
+
+// ═══════════════════════════════════════════════════════
+// State — split into model / ui / res buckets behind a back-compat Proxy.
+// ═══════════════════════════════════════════════════════
+
+// Data model: what gets exported / persisted.
+const model = {
+  annotations: [],
+  noteIndex: [],        // [{globalIndex, measure, beat, measureBeat, pitch, svgEl}]
+  taps: [],             // ordered: [{ audio_t }]
+  playSequence: [],     // expected play order: [{ score_idx, pass_number, status }]
+  noteOnsets: {},       // score_idx -> [{ audio_t, pass_number, status }]
+};
+
+// UI state: ephemeral, only meaningful while the page is open.
+const ui = {
   mode: null,           // null | 'select_start' | 'select_end' | 'popup' | 'tap_align'
   currentType: null,
   startIdx: null,
   endIdx: null,
-  annotations: [],
-  noteIndex: [],        // [{globalIndex, measure, beat, measureBeat, pitch, svgEl}]
-  osmd: null,
-  wavesurfer: null,
   editingId: null,
-  audioFilename: '',
-  scoreFilename: '',
-  // ─── tap-align state (v2) ───
-  taps: [],             // ordered: [{ audio_t }]
-  playSequence: [],     // expected play order: [{ score_idx, pass_number, status }]
-  noteOnsets: {},       // score_idx (str) -> [{ audio_t, pass_number, status }]
-  tapPos: 0,            // current position in playSequence during tap-align
+  tapPos: 0,
 };
 
-const SCHEMA_VERSION = 2;
+// External resources: third-party object refs + filenames.
+const res = {
+  osmd: null,
+  wavesurfer: null,
+  audioFilename: '',
+  scoreFilename: '',
+};
+
+// Transient/cache storage: stamps, timers, lazily-built indices. Anything
+// not declared in model/ui/res that the existing code stuffs onto S goes here.
+const cache = {};
+
+// Back-compat: code throughout the file accesses `S.foo`. The Proxy routes
+// reads/writes through to the appropriate bucket so we don't have to touch
+// every call site at once. New code should prefer the named buckets directly.
+const S = new Proxy({}, {
+  get(_, prop) {
+    if (typeof prop !== 'string') return undefined;
+    if (prop in model) return model[prop];
+    if (prop in ui) return ui[prop];
+    if (prop in res) return res[prop];
+    return cache[prop];
+  },
+  set(_, prop, value) {
+    if (typeof prop !== 'string') { cache[prop] = value; return true; }
+    if (prop in model) model[prop] = value;
+    else if (prop in ui) ui[prop] = value;
+    else if (prop in res) res[prop] = value;
+    else cache[prop] = value;
+    return true;
+  },
+  has(_, prop) {
+    return (typeof prop === 'string') &&
+      (prop in model || prop in ui || prop in res || prop in cache);
+  },
+});
 
 const TYPE_META = {
   wrong_note:       { label: 'Wrong Note',     clicks: 1, color: '#e74c3c' },
@@ -1601,7 +1664,7 @@ function downloadFile(content, filename, mime) {
 // LocalStorage auto-save
 // ═══════════════════════════════════════════════════════
 function saveToLocalStorage() {
-  localStorage.setItem('violin_annotations', JSON.stringify({
+  localStorage.setItem(CONFIG.storageKey, JSON.stringify({
     schema_version: SCHEMA_VERSION,
     annotations: S.annotations,
     audioFilename: S.audioFilename,
@@ -1614,7 +1677,7 @@ function saveToLocalStorage() {
 
 function loadFromLocalStorage() {
   try {
-    const saved = JSON.parse(localStorage.getItem('violin_annotations'));
+    const saved = JSON.parse(localStorage.getItem(CONFIG.storageKey));
     if (saved && saved.annotations?.length > 0) {
       if (confirm(`Restore ${saved.annotations.length} annotations from previous session (${saved.audioFilename})?`)) {
         S.annotations = saved.annotations;
@@ -1783,7 +1846,7 @@ function closeEditTapsModal(save) {
       const r = S.playSequence[k];
       const note = S.noteIndex[r.score_idx];
       if (note?.svgEl) {
-        const opacity = r.pass_number > 1 ? 0.55 : 0.32;
+        const opacity = r.pass_number > 1 ? CONFIG.recordedTapAlphaPassN : CONFIG.recordedTapAlphaPass1;
         addHighlightRect(note.svgEl, '#10b981', opacity, 'tap-recorded-highlight');
       }
     }
@@ -1891,10 +1954,10 @@ function handleTapRowAction(act, i) {
   if (i < 0 || i >= taps.length) return;
   switch (act) {
     case 'nudge-down':
-      if (taps[i].audio_t != null) taps[i].audio_t = Math.max(0, taps[i].audio_t - 0.05);
+      if (taps[i].audio_t != null) taps[i].audio_t = Math.max(0, taps[i].audio_t - CONFIG.tapNudgeStepS);
       break;
     case 'nudge-up':
-      if (taps[i].audio_t != null) taps[i].audio_t = taps[i].audio_t + 0.05;
+      if (taps[i].audio_t != null) taps[i].audio_t = taps[i].audio_t + CONFIG.tapNudgeStepS;
       break;
     case 'seek':
       if (taps[i].audio_t != null && S.wavesurfer) {
@@ -1978,8 +2041,8 @@ function ensureOnsetEnvelope() {
   const ch = buf.getChannelData(0);
   const sr = buf.sampleRate;
   // Frame parameters: ~10 ms hops for decent time resolution.
-  const hop = Math.round(sr * 0.010);
-  const winLen = hop * 2;
+  const hop = Math.round(sr * CONFIG.rmsHopS);
+  const winLen = hop * CONFIG.rmsWinHopMultiplier;
   const nFrames = Math.max(0, Math.floor((ch.length - winLen) / hop));
   const rms = new Float32Array(nFrames);
   for (let i = 0; i < nFrames; i++) {
@@ -2014,9 +2077,9 @@ function snapTapsToOnsets() {
   if (S.taps.length === 0) { alert('No taps to snap.'); return; }
   const env = ensureOnsetEnvelope();
   if (!env) { alert('Audio not ready yet — load audio and wait for it to decode, then try again.'); return; }
-  const radiusMs = parseInt(document.getElementById('snap-window-ms').value) || 150;
+  const radiusMs = parseInt(document.getElementById('snap-window-ms').value) || CONFIG.snapDefaultWindowMs;
   const radiusS = radiusMs / 1000;
-  const eps = 0.005; // 5 ms minimum gap between consecutive taps
+  const eps = CONFIG.snapMonotonicEpsS;
   let prev = -Infinity;
   let snapped = 0, unchanged = 0;
   const shifts = [];
@@ -2136,7 +2199,7 @@ function recordTap() {
     const note = S.noteIndex[seqRecord.score_idx];
     if (note?.svgEl) {
       // Use a darker green for repeated passes so visual stacking is obvious.
-      const opacity = seqRecord.pass_number > 1 ? 0.55 : 0.32;
+      const opacity = seqRecord.pass_number > 1 ? CONFIG.recordedTapAlphaPassN : CONFIG.recordedTapAlphaPass1;
       addHighlightRect(note.svgEl, '#10b981', opacity, 'tap-recorded-highlight');
     }
   }
@@ -2191,72 +2254,88 @@ function clearRecordedTapHighlights() {
   document.querySelectorAll('.tap-recorded-highlight').forEach(el => el.remove());
 }
 
-// ─── Playback-follow highlight ───
-// Track which score note is "currently sounding" given the playhead time,
-// and apply a transient yellow highlight. Off during tap-align mode (blue
-// expected-highlight takes priority there).
+// ─── Playback-follow trackers (single source of truth) ───
+// Both the on-score yellow highlight AND the Edit Taps table row highlight
+// follow the same logical "current tap" — the tap whose audio_t is the
+// largest value ≤ playhead. We compute it once per timeupdate and feed
+// both consumers.
 
-let _followCurrentIdx = null;
+let _followCurrentScoreIdx = null;   // for on-score yellow highlight
+let _editTapsCurrentRow    = null;   // for Edit Taps table row
 
-/** Flatten S.noteOnsets into a [(audio_t, score_idx), ...] sorted array.
- *  Recomputed on demand since annotator edits can change it. */
-function buildPlaybackIndex() {
+// Cache: a sorted [(audio_t, tap_idx, score_idx), ...] index, rebuilt
+// only when noteOnsets or taps change.
+const _trackerCache = { data: null, stamp: -1 };
+
+function bumpNoteOnsetsStamp() {
+  cache._noteOnsetsStamp = (cache._noteOnsetsStamp || 0) + 1;
+}
+
+function getPlaybackIndex() {
+  const stamp = cache._noteOnsetsStamp || 0;
+  if (_trackerCache.data && _trackerCache.stamp === stamp) return _trackerCache.data;
   const out = [];
-  if (!S.noteOnsets) return out;
-  for (const [k, passes] of Object.entries(S.noteOnsets)) {
-    const idx = parseInt(k);
-    for (const p of passes) {
-      if (p.audio_t != null) out.push([p.audio_t, idx]);
+  if (S.noteOnsets) {
+    for (const [k, passes] of Object.entries(S.noteOnsets)) {
+      const sIdx = parseInt(k);
+      let passIdxInNote = 0;
+      for (const p of passes) {
+        if (p.audio_t != null) {
+          out.push({ audio_t: p.audio_t, score_idx: sIdx, pass_index_in_note: passIdxInNote });
+        }
+        passIdxInNote++;
+      }
     }
   }
-  out.sort((a, b) => a[0] - b[0]);
+  out.sort((a, b) => a.audio_t - b.audio_t);
+  // Tag each entry with its position in the global tap order.
+  for (let i = 0; i < out.length; i++) out[i].tap_idx = i;
+  _trackerCache.data = out;
+  _trackerCache.stamp = stamp;
   return out;
 }
 
-function updatePlaybackFollowHighlight(t) {
-  if (S.mode === 'tap_align') return;   // blue expected-highlight is the boss in this mode
-  // Rebuild cache if needed.
-  if (!S._playbackIndexCache || S._playbackIndexStamp !== S._noteOnsetsStamp) {
-    S._playbackIndexCache = buildPlaybackIndex();
-    S._playbackIndexStamp = S._noteOnsetsStamp;
-  }
-  const idx = S._playbackIndexCache;
-  if (idx.length === 0) return;
-  // Binary search for the largest audio_t ≤ t.
+/** Returns the tracker entry whose audio_t is the largest value ≤ t,
+ *  or null if no such entry exists. */
+function currentEntryAt(t) {
+  const idx = getPlaybackIndex();
+  if (idx.length === 0) return null;
   let lo = 0, hi = idx.length - 1, best = -1;
   while (lo <= hi) {
     const m = (lo + hi) >> 1;
-    if (idx[m][0] <= t) { best = m; lo = m + 1; } else { hi = m - 1; }
+    if (idx[m].audio_t <= t) { best = m; lo = m + 1; } else { hi = m - 1; }
   }
-  const curScoreIdx = best >= 0 ? idx[best][1] : null;
-  if (curScoreIdx === _followCurrentIdx) return;
+  return best >= 0 ? idx[best] : null;
+}
+
+function updatePlaybackFollowHighlight(t) {
+  if (S.mode === 'tap_align') return;   // blue expected-highlight wins in this mode
+  const cur = currentEntryAt(t);
+  const sIdx = cur ? cur.score_idx : null;
+  if (sIdx === _followCurrentScoreIdx) return;
   clearPlaybackFollowHighlight();
-  _followCurrentIdx = curScoreIdx;
-  if (curScoreIdx == null) return;
-  const note = S.noteIndex[curScoreIdx];
+  _followCurrentScoreIdx = sIdx;
+  if (sIdx == null) return;
+  const note = S.noteIndex[sIdx];
   if (note?.svgEl) {
-    addHighlightRect(note.svgEl, '#f59e0b', 0.55, 'follow-highlight');
+    addHighlightRect(note.svgEl, '#f59e0b', CONFIG.recordedTapAlphaPassN, 'follow-highlight');
     note.svgEl.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
   }
 }
 
 function clearPlaybackFollowHighlight() {
   document.querySelectorAll('.follow-highlight').forEach(el => el.remove());
-  _followCurrentIdx = null;
+  _followCurrentScoreIdx = null;
 }
 
-// Bump the cache-stamp whenever noteOnsets changes (closeEditTapsModal / tap-align stop).
-function bumpNoteOnsetsStamp() {
-  S._noteOnsetsStamp = (S._noteOnsetsStamp || 0) + 1;
-}
-
-// Keep the Edit Taps table in sync with audio playback: highlight the
-// row for the tap whose audio_t is the largest value ≤ current playhead.
-let _editTapsCurrentRow = null;
+// Edit Taps table row highlight uses S.taps array index (not the tracker
+// global tap_idx, which orders by audio_t and may differ if tap times are
+// non-monotonic). Same binary-search shape, separate cache key.
 function updateEditTapsRowHighlight(t) {
   const overlay = document.getElementById('edit-taps-overlay');
   if (!overlay || overlay.style.display === 'none') return;
-  // Linear scan is fine (typical piece has <500 taps).
+  // Same monotonic search as currentEntryAt but over S.taps order so the
+  // highlighted row matches what's visible in the table.
   let bestI = -1, bestT = -Infinity;
   for (let i = 0; i < S.taps.length; i++) {
     const tt = S.taps[i].audio_t;
@@ -2264,7 +2343,6 @@ function updateEditTapsRowHighlight(t) {
     if (tt <= t && tt > bestT) { bestT = tt; bestI = i; }
   }
   if (bestI === _editTapsCurrentRow) return;
-  // Clear old highlight
   if (_editTapsCurrentRow != null) {
     const prev = document.querySelector(`#edit-taps-list tr[data-i="${_editTapsCurrentRow}"]`);
     if (prev) prev.style.background = '';
@@ -2274,7 +2352,6 @@ function updateEditTapsRowHighlight(t) {
   const row = document.querySelector(`#edit-taps-list tr[data-i="${bestI}"]`);
   if (row) {
     row.style.background = '#fef3c7';
-    // Keep it in view without thrashing.
     row.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
   }
 }
@@ -2360,7 +2437,7 @@ function showHelp() {
 }
 function hideHelp() {
   document.getElementById('help-overlay').style.display = 'none';
-  try { localStorage.setItem('violin_help_seen', '1'); } catch(e) {}
+  try { localStorage.setItem(CONFIG.helpFirstVisitKey, '1'); } catch(e) {}
 }
 document.getElementById('btn-help').onclick = showHelp;
 document.getElementById('btn-help-close').onclick = hideHelp;
@@ -2384,7 +2461,7 @@ renderAnnotationList();
 loadFromLocalStorage();
 // Auto-show help on first visit
 try {
-  if (!localStorage.getItem('violin_help_seen')) showHelp();
+  if (!localStorage.getItem(CONFIG.helpFirstVisitKey)) showHelp();
 } catch(e) {}
 </script>
 </body>
