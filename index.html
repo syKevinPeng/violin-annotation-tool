@@ -494,10 +494,14 @@
     </div>
     <div id="edit-taps-summary" style="padding:8px 10px; font-size:13px; color:#0e7490; background:#ecfeff; border-radius:6px; margin-bottom:10px;"></div>
     <div id="edit-taps-list" style="overflow:auto; flex:1; border:1px solid #e5e7eb; border-radius:6px;"></div>
-    <div style="display:flex; gap:8px; margin-top:12px; padding-top:10px; border-top:1px solid #e5e7eb; align-items:center;">
+    <div style="display:flex; gap:8px; margin-top:12px; padding-top:10px; border-top:1px solid #e5e7eb; align-items:center; flex-wrap:wrap;">
       <button id="btn-edit-taps-insert-top" type="button" style="padding:6px 12px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer; font-size:12px;">+ Insert at top</button>
+      <button id="btn-edit-taps-snap" type="button" title="Snap each tap to the nearest amplitude-onset peak within ±150ms" style="padding:6px 12px; border:1px solid #c4b5fd; border-radius:6px; background:#ede9fe; color:#5b21b6; cursor:pointer; font-size:12px; font-weight:600;">🪄 Snap to Onsets</button>
+      <label style="font-size:11px; color:#64748b; display:flex; align-items:center; gap:4px;">window (ms):
+        <input type="number" id="snap-window-ms" value="150" min="20" max="500" step="10" style="width:56px; padding:2px 4px; border:1px solid #d1d5db; border-radius:4px; font-size:11px;">
+      </label>
       <button id="btn-edit-taps-clear-all" type="button" title="Delete every recorded tap" style="padding:6px 12px; border:1px solid #fecaca; border-radius:6px; background:#fef2f2; color:#991b1b; cursor:pointer; font-size:12px;">🗑 Clear All</button>
-      <span style="color:#64748b; font-size:12px; flex:1;">Edits take effect immediately. Use Cancel to revert all changes since you opened this dialog.</span>
+      <span style="color:#64748b; font-size:12px; flex:1; min-width:160px;">Cancel reverts all changes since opening.</span>
       <button id="btn-edit-taps-cancel" type="button" style="padding:8px 20px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer; font-size:13px;">Cancel</button>
       <button id="btn-edit-taps-save" type="button" style="padding:8px 20px; background:#065f46; color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer;">Save</button>
     </div>
@@ -686,6 +690,7 @@ function showStatus(msg) {
 // ═══════════════════════════════════════════════════════
 function initAudio(file) {
   if (S.wavesurfer) S.wavesurfer.destroy();
+  _onsetEnvelope = null;  // invalidate snap-envelope cache for the new audio
   if (S._audioBlobUrl) URL.revokeObjectURL(S._audioBlobUrl);
   const url = URL.createObjectURL(file);
   S._audioBlobUrl = url;
@@ -2118,12 +2123,116 @@ function clearAllTaps() {
   renderEditTaps();
 }
 
+// ─── Onset-based snap ───
+// Compute a novelty curve (positive derivative of short-term RMS) over the
+// decoded audio and memoize it. On Snap-to-Onsets, each tap is moved to the
+// peak of the novelty curve within a configurable window around its current
+// time. Collisions are avoided by enforcing strict monotonicity — if a snap
+// would land at or before the previous tap's snapped time, the original is
+// kept.
+let _onsetEnvelope = null;
+
+function ensureOnsetEnvelope() {
+  if (_onsetEnvelope) return _onsetEnvelope;
+  if (!S.wavesurfer) return null;
+  const buf = S.wavesurfer.getDecodedData?.();
+  if (!buf) return null;
+  const ch = buf.getChannelData(0);
+  const sr = buf.sampleRate;
+  // Frame parameters: ~10 ms hops for decent time resolution.
+  const hop = Math.round(sr * 0.010);
+  const winLen = hop * 2;
+  const nFrames = Math.max(0, Math.floor((ch.length - winLen) / hop));
+  const rms = new Float32Array(nFrames);
+  for (let i = 0; i < nFrames; i++) {
+    let s = 0;
+    const start = i * hop;
+    for (let j = 0; j < winLen; j++) {
+      const v = ch[start + j];
+      s += v * v;
+    }
+    rms[i] = Math.sqrt(s / winLen);
+  }
+  // Positive half-wave derivative (novelty).
+  const novelty = new Float32Array(nFrames);
+  for (let i = 1; i < nFrames; i++) {
+    const d = rms[i] - rms[i - 1];
+    novelty[i] = d > 0 ? d : 0;
+  }
+  // 3-tap smoothing to suppress single-frame spikes.
+  const smoothed = new Float32Array(nFrames);
+  for (let i = 1; i < nFrames - 1; i++) {
+    smoothed[i] = (novelty[i - 1] + novelty[i] + novelty[i + 1]) / 3;
+  }
+  const times = new Float32Array(nFrames);
+  for (let i = 0; i < nFrames; i++) times[i] = (i * hop) / sr;
+  _onsetEnvelope = { times, novelty: smoothed, hopS: hop / sr };
+  return _onsetEnvelope;
+}
+
+/** Find the time of the peak novelty value within [centerT ± radiusS].
+ *  Returns null if no frames fall in the window. Optionally requires the
+ *  result to be strictly greater than minT. */
+function findPeakInWindow(env, centerT, radiusS, minT = -Infinity) {
+  const { times, novelty } = env;
+  const lo = centerT - radiusS;
+  const hi = centerT + radiusS;
+  // Binary search for the first index with time >= lo.
+  let a = 0, b = times.length - 1, start = times.length;
+  while (a <= b) {
+    const m = (a + b) >> 1;
+    if (times[m] >= lo) { start = m; b = m - 1; } else { a = m + 1; }
+  }
+  let bestI = -1, bestV = -Infinity;
+  for (let i = start; i < times.length && times[i] <= hi; i++) {
+    if (times[i] <= minT) continue;
+    if (novelty[i] > bestV) { bestV = novelty[i]; bestI = i; }
+  }
+  return bestI < 0 ? null : times[bestI];
+}
+
+function snapTapsToOnsets() {
+  if (S.taps.length === 0) { alert('No taps to snap.'); return; }
+  const env = ensureOnsetEnvelope();
+  if (!env) { alert('Audio not ready yet — load audio and wait for it to decode, then try again.'); return; }
+  const radiusMs = parseInt(document.getElementById('snap-window-ms').value) || 150;
+  const radiusS = radiusMs / 1000;
+  const eps = 0.005; // 5 ms minimum gap between consecutive taps
+  let prev = -Infinity;
+  let snapped = 0, unchanged = 0;
+  const shifts = [];
+  for (let i = 0; i < S.taps.length; i++) {
+    const orig = S.taps[i].audio_t;
+    if (orig == null) { unchanged++; continue; }
+    const peak = findPeakInWindow(env, orig, radiusS, prev + eps);
+    if (peak != null && Math.abs(peak - orig) >= 0.001) {
+      S.taps[i].audio_t = peak;
+      shifts.push(peak - orig);
+      prev = peak;
+      snapped++;
+    } else {
+      prev = Math.max(prev, orig);
+      unchanged++;
+    }
+  }
+  renderEditTaps();
+  const meanShift = shifts.length ? (shifts.reduce((a, b) => a + b, 0) / shifts.length) : 0;
+  const maxShift = shifts.length ? shifts.reduce((a, b) => Math.abs(b) > Math.abs(a) ? b : a, 0) : 0;
+  alert(
+    `🪄 Snap done.\n` +
+    `Snapped: ${snapped}  •  Unchanged: ${unchanged}\n` +
+    `Avg shift: ${(meanShift * 1000).toFixed(1)} ms  •  Max shift: ${(maxShift * 1000).toFixed(1)} ms\n\n` +
+    `Use Cancel on the modal to revert if the result isn't right.`
+  );
+}
+
 document.getElementById('btn-edit-taps').onclick = openEditTapsModal;
 document.getElementById('btn-edit-taps-x').onclick = () => closeEditTapsModal(false);
 document.getElementById('btn-edit-taps-cancel').onclick = () => closeEditTapsModal(false);
 document.getElementById('btn-edit-taps-save').onclick = () => closeEditTapsModal(true);
 document.getElementById('btn-edit-taps-insert-top').onclick = insertTapAtTop;
 document.getElementById('btn-edit-taps-clear-all').onclick = clearAllTaps;
+document.getElementById('btn-edit-taps-snap').onclick = snapTapsToOnsets;
 document.getElementById('edit-taps-overlay').onclick = (e) => {
   if (e.target.id === 'edit-taps-overlay') closeEditTapsModal(false);
 };
