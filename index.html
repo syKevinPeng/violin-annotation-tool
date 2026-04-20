@@ -2019,7 +2019,12 @@ function flashTapRow(i) {
 
 function clearAllTaps() {
   if (S.taps.length === 0) return;
-  if (!confirm(`Delete all ${S.taps.length} recorded taps? Use Cancel on the modal to undo, or Save to commit.`)) return;
+  const N = S.taps.length;
+  if (!confirm(
+    `Clear all ${N} taps?\n\n` +
+    `This empties the table. Cancel on the panel reverts the entire editing session ` +
+    `(including this clear); Save commits.`
+  )) return;
   S.taps = [];
   renderEditTaps();
 }
@@ -2083,6 +2088,7 @@ function snapTapsToOnsets() {
   let prev = -Infinity;
   let snapped = 0, unchanged = 0;
   const shifts = [];
+  const movedIndices = [];
   for (let i = 0; i < S.taps.length; i++) {
     const orig = S.taps[i].audio_t;
     if (orig == null) { unchanged++; continue; }
@@ -2092,19 +2098,32 @@ function snapTapsToOnsets() {
       shifts.push(peak - orig);
       prev = peak;
       snapped++;
+      movedIndices.push(i);
     } else {
       prev = Math.max(prev, orig);
       unchanged++;
     }
   }
   renderEditTaps();
+  // Flash every row whose audio_t actually moved, staggered so the eye sees
+  // the wave of changes propagate down the table.
+  movedIndices.forEach((rowIdx, k) => {
+    setTimeout(() => {
+      const row = document.querySelector(`#edit-taps-list tr[data-i="${rowIdx}"]`);
+      if (!row) return;
+      row.classList.remove('tap-row-flash');
+      void row.offsetWidth;
+      row.classList.add('tap-row-flash');
+      setTimeout(() => row.classList.remove('tap-row-flash'), CONFIG.flashRowMs);
+    }, k * 20);
+  });
   const meanShift = shifts.length ? (shifts.reduce((a, b) => a + b, 0) / shifts.length) : 0;
   const maxShift = shifts.length ? shifts.reduce((a, b) => Math.abs(b) > Math.abs(a) ? b : a, 0) : 0;
   alert(
     `🪄 Snap done.\n` +
     `Snapped: ${snapped}  •  Unchanged: ${unchanged}\n` +
     `Avg shift: ${(meanShift * 1000).toFixed(1)} ms  •  Max shift: ${(maxShift * 1000).toFixed(1)} ms\n\n` +
-    `Use Cancel on the modal to revert if the result isn't right.`
+    `Snapped rows are flashing in the table. Cancel on the panel reverts if the result isn't right.`
   );
 }
 
