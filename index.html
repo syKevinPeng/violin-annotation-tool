@@ -790,9 +790,16 @@ function buildNoteIndex() {
             if (!gNote || !gNote.sourceNote || gNote.sourceNote.isRestFlag) continue;
 
             const sn = gNote.sourceNote;
-            const measureNum = sn.sourceMeasure
-              ? sn.sourceMeasure.MeasureNumber
-              : 0;
+            // Some OSMD measures (pickup, voltas, XML quirks) have an
+            // undefined MeasureNumber. Fall back to index-in-list to keep
+            // measureBeat strings numeric.
+            let measureNum = sn.sourceMeasure?.MeasureNumber;
+            if (measureNum == null) {
+              try {
+                measureNum = osmd.Sheet.SourceMeasures?.indexOf?.(sn.sourceMeasure) + 1;
+                if (!Number.isFinite(measureNum) || measureNum <= 0) measureNum = 0;
+              } catch (e) { measureNum = 0; }
+            }
 
             // Beat: derive from time signature
             let beat = 1;
@@ -1996,7 +2003,11 @@ function renderEditTaps() {
     const t = taps[i].audio_t;
     const seqRec = seq[i];
     const note = seqRec ? S.noteIndex[seqRec.score_idx] : null;
-    const mb = note ? `${note.measureBeat} (${note.pitch})` : '<span style="color:#64748b;">— unmapped (past end of seq) —</span>';
+    const mbStr = note?.measureBeat || `#${seqRec?.score_idx ?? '?'}`;
+    const pitchStr = note?.pitch || '?';
+    const mb = note
+      ? `${mbStr} (${pitchStr})`
+      : '<span style="color:#64748b;">— unmapped (past end of seq) —</span>';
     const pass = seqRec ? seqRec.pass_number : '';
     const status = seqRec ? seqRec.status : '';
     const nonMono = (i > 0 && taps[i - 1].audio_t != null && t != null && t < taps[i - 1].audio_t);
