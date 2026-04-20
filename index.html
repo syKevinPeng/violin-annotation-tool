@@ -496,6 +496,7 @@
     <div id="edit-taps-list" style="overflow:auto; flex:1; border:1px solid #e5e7eb; border-radius:6px;"></div>
     <div style="display:flex; gap:8px; margin-top:12px; padding-top:10px; border-top:1px solid #e5e7eb; align-items:center;">
       <button id="btn-edit-taps-insert-top" type="button" style="padding:6px 12px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer; font-size:12px;">+ Insert at top</button>
+      <button id="btn-edit-taps-clear-all" type="button" title="Delete every recorded tap" style="padding:6px 12px; border:1px solid #fecaca; border-radius:6px; background:#fef2f2; color:#991b1b; cursor:pointer; font-size:12px;">🗑 Clear All</button>
       <span style="color:#64748b; font-size:12px; flex:1;">Edits take effect immediately. Use Cancel to revert all changes since you opened this dialog.</span>
       <button id="btn-edit-taps-cancel" type="button" style="padding:8px 20px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer; font-size:13px;">Cancel</button>
       <button id="btn-edit-taps-save" type="button" style="padding:8px 20px; background:#065f46; color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer;">Save</button>
@@ -2076,11 +2077,19 @@ function insertTapAtTop() {
   renderEditTaps();
 }
 
+function clearAllTaps() {
+  if (S.taps.length === 0) return;
+  if (!confirm(`Delete all ${S.taps.length} recorded taps? Use Cancel on the modal to undo, or Save to commit.`)) return;
+  S.taps = [];
+  renderEditTaps();
+}
+
 document.getElementById('btn-edit-taps').onclick = openEditTapsModal;
 document.getElementById('btn-edit-taps-x').onclick = () => closeEditTapsModal(false);
 document.getElementById('btn-edit-taps-cancel').onclick = () => closeEditTapsModal(false);
 document.getElementById('btn-edit-taps-save').onclick = () => closeEditTapsModal(true);
 document.getElementById('btn-edit-taps-insert-top').onclick = insertTapAtTop;
+document.getElementById('btn-edit-taps-clear-all').onclick = clearAllTaps;
 document.getElementById('edit-taps-overlay').onclick = (e) => {
   if (e.target.id === 'edit-taps-overlay') closeEditTapsModal(false);
 };
