@@ -388,6 +388,7 @@
   <button class="err-btn" id="btn-cancel" style="display:none;">&#x2715; Cancel</button>
   <span style="margin-left:auto; display:flex; align-items:center; gap:8px;">
     <button class="err-btn" id="btn-check-counts" title="Show expected tap count derived from current error annotations vs the count from Tap-Align (if run)" style="background:#fef3c7; color:#854d0e; border:2px solid #f59e0b;">🔍 Check Counts</button>
+    <button class="err-btn" id="btn-edit-taps" title="Review and manually adjust recorded taps after running Tap-Align" style="background:#fef9c3; color:#854d0e; border:2px solid #eab308;">✎ Edit Taps</button>
     <button class="err-btn" id="btn-tap-align" title="After marking errors, run Tap-Align: press SPACE on each note onset to record per-note audio times" style="background:#ecfeff; color:#0e7490; border:2px solid #06b6d4;">🎵 Tap-Align</button>
   </span>
 </div>
@@ -480,6 +481,24 @@
     <div class="popup-actions">
       <button id="btn-popup-confirm">Confirm</button>
       <button id="btn-popup-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Edit Taps Modal ─── -->
+<div id="edit-taps-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:200; justify-content:center; align-items:center;">
+  <div id="edit-taps-modal" style="background:white; border-radius:14px; padding:22px 26px; max-width:860px; width:94%; max-height:88vh; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,0.3); font-size:13px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #e5e7eb;">
+      <h2 style="font-size:18px; margin:0;">✎ Edit Taps</h2>
+      <button id="btn-edit-taps-x" type="button" style="font-size:18px; padding:4px 12px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer;">×</button>
+    </div>
+    <div id="edit-taps-summary" style="padding:8px 10px; font-size:13px; color:#0e7490; background:#ecfeff; border-radius:6px; margin-bottom:10px;"></div>
+    <div id="edit-taps-list" style="overflow:auto; flex:1; border:1px solid #e5e7eb; border-radius:6px;"></div>
+    <div style="display:flex; gap:8px; margin-top:12px; padding-top:10px; border-top:1px solid #e5e7eb; align-items:center;">
+      <button id="btn-edit-taps-insert-top" type="button" style="padding:6px 12px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer; font-size:12px;">+ Insert at top</button>
+      <span style="color:#64748b; font-size:12px; flex:1;">Edits take effect immediately. Use Cancel to revert all changes since you opened this dialog.</span>
+      <button id="btn-edit-taps-cancel" type="button" style="padding:8px 20px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer; font-size:13px;">Cancel</button>
+      <button id="btn-edit-taps-save" type="button" style="padding:8px 20px; background:#065f46; color:white; border:none; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer;">Save</button>
     </div>
   </div>
 </div>
@@ -1879,6 +1898,192 @@ function showCountsModal() {
   `;
   document.getElementById('counts-overlay').style.display = 'flex';
 }
+
+// ═══════════════════════════════════════════════════════
+// Edit Taps Modal
+// ═══════════════════════════════════════════════════════
+
+// Snapshot of S.taps taken when the modal opens; used for Cancel.
+let _editTapsSnapshot = null;
+
+function openEditTapsModal() {
+  if (S.noteIndex.length === 0) {
+    alert('Load a score first.');
+    return;
+  }
+  // If tap-align hasn't been run but we have annotations, rebuild the play
+  // sequence so status/measure_beat columns make sense for any inserts.
+  if (S.playSequence.length === 0 && S.annotations.length > 0) {
+    S.playSequence = buildPlaySequence(S.noteIndex, S.annotations);
+  }
+  _editTapsSnapshot = JSON.parse(JSON.stringify(S.taps));
+  renderEditTaps();
+  document.getElementById('edit-taps-overlay').style.display = 'flex';
+}
+
+function closeEditTapsModal(save) {
+  if (!save) {
+    // Revert
+    S.taps = _editTapsSnapshot || [];
+  }
+  _editTapsSnapshot = null;
+  // Re-assign onsets based on final taps
+  S.noteOnsets = assignTapsToSequence(S.taps, S.playSequence, S.noteIndex);
+  saveToLocalStorage();
+  // If tap-align is currently active, refresh its display + highlights.
+  if (S.mode === 'tap_align') {
+    updateTapAlignDisplay();
+    highlightExpectedNote();
+    // Rebuild recorded-tap highlights from scratch to match current taps.
+    clearRecordedTapHighlights();
+    for (let k = 0; k < Math.min(S.taps.length, S.playSequence.length); k++) {
+      const r = S.playSequence[k];
+      const note = S.noteIndex[r.score_idx];
+      if (note?.svgEl) {
+        const opacity = r.pass_number > 1 ? 0.55 : 0.32;
+        addHighlightRect(note.svgEl, '#10b981', opacity, 'tap-recorded-highlight');
+      }
+    }
+  }
+  renderAnnotationList();
+  document.getElementById('edit-taps-overlay').style.display = 'none';
+}
+
+function renderEditTaps() {
+  const summary = document.getElementById('edit-taps-summary');
+  const list = document.getElementById('edit-taps-list');
+  const taps = S.taps;
+  const seq = S.playSequence;
+  const expected = seq.length;
+  const diff = taps.length - expected;
+  summary.innerHTML = `
+    <strong>${taps.length}</strong> tap${taps.length === 1 ? '' : 's'} recorded
+    &middot; <strong>${expected}</strong> expected from play sequence
+    ${diff === 0 ? '<span style="color:#065f46; font-weight:600;">&nbsp;&nbsp;✓ match</span>' : `<span style="color:#7f1d1d; font-weight:600;">&nbsp;&nbsp;Δ ${diff > 0 ? '+' : ''}${diff}</span>`}
+  `;
+
+  if (taps.length === 0) {
+    list.innerHTML = `<div style="padding:24px; text-align:center; color:#64748b; font-size:13px;">No taps yet. Run Tap-Align first, or use <em>+ Insert at top</em> to add a tap manually.</div>`;
+    return;
+  }
+
+  const rows = [];
+  for (let i = 0; i < taps.length; i++) {
+    const t = taps[i].audio_t;
+    const seqRec = seq[i];
+    const note = seqRec ? S.noteIndex[seqRec.score_idx] : null;
+    const mb = note ? `${note.measureBeat} (${note.pitch})` : '<span style="color:#64748b;">— unmapped (past end of seq) —</span>';
+    const pass = seqRec ? seqRec.pass_number : '';
+    const status = seqRec ? seqRec.status : '';
+    const nonMono = (i > 0 && taps[i - 1].audio_t != null && t != null && t < taps[i - 1].audio_t);
+    const warn = nonMono ? '<span title="Time decreases vs previous tap — probably a mistake" style="color:#dc2626; font-weight:700; margin-right:4px;">⚠</span>' : '';
+    rows.push(`
+      <tr data-i="${i}" style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:4px 8px; font-family:monospace; font-size:12px; color:#64748b;">#${i + 1}</td>
+        <td style="padding:4px 8px;">
+          ${warn}<input type="number" step="0.01" min="0" value="${t != null ? t.toFixed(3) : ''}" data-i="${i}" class="tap-time-input" style="width:82px; padding:3px 6px; border:1px solid #d1d5db; border-radius:4px; font-family:monospace;">
+        </td>
+        <td style="padding:4px 8px;">${mb}</td>
+        <td style="padding:4px 8px; text-align:center;">${pass}</td>
+        <td style="padding:4px 8px; font-size:12px; color:#64748b;">${status}</td>
+        <td style="padding:4px 8px; white-space:nowrap;">
+          <button class="tap-row-btn" data-act="nudge-down" data-i="${i}" title="−0.05s" style="padding:2px 6px; font-size:11px; border:1px solid #d1d5db; border-radius:3px; background:white; cursor:pointer;">−50ms</button>
+          <button class="tap-row-btn" data-act="nudge-up" data-i="${i}" title="+0.05s" style="padding:2px 6px; font-size:11px; border:1px solid #d1d5db; border-radius:3px; background:white; cursor:pointer;">+50ms</button>
+          <button class="tap-row-btn" data-act="seek" data-i="${i}" title="Seek audio to this tap time" style="padding:2px 6px; font-size:11px; border:1px solid #d1d5db; border-radius:3px; background:white; cursor:pointer;">▶</button>
+          <button class="tap-row-btn" data-act="insert-after" data-i="${i}" title="Insert a new tap after this one" style="padding:2px 6px; font-size:11px; border:1px solid #d1d5db; border-radius:3px; background:#f0fdf4; cursor:pointer;">＋</button>
+          <button class="tap-row-btn" data-act="delete" data-i="${i}" title="Delete this tap" style="padding:2px 6px; font-size:11px; border:1px solid #fecaca; border-radius:3px; background:#fef2f2; cursor:pointer;">🗑</button>
+        </td>
+      </tr>
+    `);
+  }
+
+  list.innerHTML = `
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead>
+        <tr style="background:#f3f4f6; position:sticky; top:0; text-align:left;">
+          <th style="padding:6px 8px; width:44px;">#</th>
+          <th style="padding:6px 8px; width:110px;">time (s)</th>
+          <th style="padding:6px 8px;">score note</th>
+          <th style="padding:6px 8px; width:50px; text-align:center;">pass</th>
+          <th style="padding:6px 8px; width:110px;">status</th>
+          <th style="padding:6px 8px; width:220px;">actions</th>
+        </tr>
+      </thead>
+      <tbody>${rows.join('')}</tbody>
+    </table>
+  `;
+
+  // Wire inputs
+  list.querySelectorAll('input.tap-time-input').forEach(inp => {
+    inp.addEventListener('change', (e) => {
+      const i = parseInt(e.target.dataset.i);
+      const v = parseFloat(e.target.value);
+      S.taps[i].audio_t = isNaN(v) ? null : v;
+      renderEditTaps();
+    });
+  });
+
+  // Wire row action buttons
+  list.querySelectorAll('button.tap-row-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const i = parseInt(e.currentTarget.dataset.i);
+      const act = e.currentTarget.dataset.act;
+      handleTapRowAction(act, i);
+    });
+  });
+}
+
+function handleTapRowAction(act, i) {
+  const taps = S.taps;
+  if (i < 0 || i >= taps.length) return;
+  switch (act) {
+    case 'nudge-down':
+      if (taps[i].audio_t != null) taps[i].audio_t = Math.max(0, taps[i].audio_t - 0.05);
+      break;
+    case 'nudge-up':
+      if (taps[i].audio_t != null) taps[i].audio_t = taps[i].audio_t + 0.05;
+      break;
+    case 'seek':
+      if (taps[i].audio_t != null && S.wavesurfer) {
+        const t = Math.max(0, taps[i].audio_t);
+        if (typeof S.wavesurfer.setTime === 'function') S.wavesurfer.setTime(t);
+        else {
+          const dur = S.wavesurfer.getDuration?.() || 0;
+          if (dur > 0) S.wavesurfer.seekTo(t / dur);
+        }
+      }
+      return; // no re-render needed
+    case 'insert-after': {
+      // New tap with a default time halfway between this tap and the next (or +0.1s if last).
+      const curT = taps[i].audio_t ?? 0;
+      const nextT = (i + 1 < taps.length) ? taps[i + 1].audio_t : null;
+      const newT = nextT != null ? (curT + nextT) / 2 : curT + 0.1;
+      taps.splice(i + 1, 0, { audio_t: newT });
+      break;
+    }
+    case 'delete':
+      if (!confirm(`Delete tap #${i + 1}? All subsequent taps will shift up in the mapping.`)) return;
+      taps.splice(i, 1);
+      break;
+  }
+  renderEditTaps();
+}
+
+function insertTapAtTop() {
+  const firstT = S.taps[0]?.audio_t;
+  const newT = firstT != null ? Math.max(0, firstT - 0.1) : 0;
+  S.taps.unshift({ audio_t: newT });
+  renderEditTaps();
+}
+
+document.getElementById('btn-edit-taps').onclick = openEditTapsModal;
+document.getElementById('btn-edit-taps-x').onclick = () => closeEditTapsModal(false);
+document.getElementById('btn-edit-taps-cancel').onclick = () => closeEditTapsModal(false);
+document.getElementById('btn-edit-taps-save').onclick = () => closeEditTapsModal(true);
+document.getElementById('btn-edit-taps-insert-top').onclick = insertTapAtTop;
+document.getElementById('edit-taps-overlay').onclick = (e) => {
+  if (e.target.id === 'edit-taps-overlay') closeEditTapsModal(false);
+};
 
 function startTapAlign() {
   if (S.noteIndex.length === 0) {
