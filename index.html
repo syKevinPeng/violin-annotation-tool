@@ -706,10 +706,14 @@ function initAudio(file) {
   S.wavesurfer.on('timeupdate', (t) => {
     const dur = S.wavesurfer.getDuration() || 0;
     document.getElementById('time-display').textContent = `${fmtTime(t)} / ${fmtTime(dur)}`;
+    updatePlaybackFollowHighlight(t);
   });
 
   S.wavesurfer.on('play', () => { document.getElementById('btn-play').textContent = '⏸'; });
-  S.wavesurfer.on('pause', () => { document.getElementById('btn-play').textContent = '▶'; });
+  S.wavesurfer.on('pause', () => {
+    document.getElementById('btn-play').textContent = '▶';
+    clearPlaybackFollowHighlight();
+  });
 }
 
 document.getElementById('audio-input').addEventListener('change', (e) => {
@@ -936,7 +940,23 @@ function cancelAnnotation() {
 }
 
 function onNoteClicked(idx) {
-  if (!S.mode || S.mode === 'popup') return;
+  // Review-mode click: when we're not marking an error and not in tap-align,
+  // clicking a note seeks audio to that note's tap time (if any).
+  if (!S.mode) {
+    const onsets = S.noteOnsets?.[idx];
+    const first = onsets && onsets.find(p => p.audio_t != null);
+    if (first && S.wavesurfer) {
+      const t = Math.max(0, first.audio_t);
+      if (typeof S.wavesurfer.setTime === 'function') S.wavesurfer.setTime(t);
+      else {
+        const dur = S.wavesurfer.getDuration?.() || 0;
+        if (dur > 0) S.wavesurfer.seekTo(t / dur);
+      }
+      if (!S.wavesurfer.isPlaying?.()) S.wavesurfer.play?.();
+    }
+    return;
+  }
+  if (S.mode === 'popup') return;
 
   const meta = TYPE_META[S.currentType];
 
@@ -1577,6 +1597,7 @@ function loadFromLocalStorage() {
         document.getElementById('annotator-name').value = saved.annotator || '';
         S.taps = saved.taps || [];
         S.noteOnsets = saved.noteOnsets || {};
+        bumpNoteOnsetsStamp();
         renderAnnotationList();
       }
     }
@@ -1930,6 +1951,7 @@ function closeEditTapsModal(save) {
   _editTapsSnapshot = null;
   // Re-assign onsets based on final taps
   S.noteOnsets = assignTapsToSequence(S.taps, S.playSequence, S.noteIndex);
+  bumpNoteOnsetsStamp();
   saveToLocalStorage();
   // Rebuild recorded-tap (green) highlights from scratch to match current taps.
   // Do this regardless of whether tap-align is currently active, so Clear All
@@ -2132,6 +2154,7 @@ function stopTapAlign(commit = true) {
   S.mode = null;
   if (commit) {
     S.noteOnsets = assignTapsToSequence(S.taps, S.playSequence, S.noteIndex);
+    bumpNoteOnsetsStamp();
     saveToLocalStorage();
     const got = S.taps.length;
     const expected = S.playSequence.length;
@@ -2215,6 +2238,65 @@ function clearExpectedHighlight() {
 
 function clearRecordedTapHighlights() {
   document.querySelectorAll('.tap-recorded-highlight').forEach(el => el.remove());
+}
+
+// ─── Playback-follow highlight ───
+// Track which score note is "currently sounding" given the playhead time,
+// and apply a transient yellow highlight. Off during tap-align mode (blue
+// expected-highlight takes priority there).
+
+let _followCurrentIdx = null;
+
+/** Flatten S.noteOnsets into a [(audio_t, score_idx), ...] sorted array.
+ *  Recomputed on demand since annotator edits can change it. */
+function buildPlaybackIndex() {
+  const out = [];
+  if (!S.noteOnsets) return out;
+  for (const [k, passes] of Object.entries(S.noteOnsets)) {
+    const idx = parseInt(k);
+    for (const p of passes) {
+      if (p.audio_t != null) out.push([p.audio_t, idx]);
+    }
+  }
+  out.sort((a, b) => a[0] - b[0]);
+  return out;
+}
+
+function updatePlaybackFollowHighlight(t) {
+  if (S.mode === 'tap_align') return;   // blue expected-highlight is the boss in this mode
+  // Rebuild cache if needed.
+  if (!S._playbackIndexCache || S._playbackIndexStamp !== S._noteOnsetsStamp) {
+    S._playbackIndexCache = buildPlaybackIndex();
+    S._playbackIndexStamp = S._noteOnsetsStamp;
+  }
+  const idx = S._playbackIndexCache;
+  if (idx.length === 0) return;
+  // Binary search for the largest audio_t ≤ t.
+  let lo = 0, hi = idx.length - 1, best = -1;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (idx[m][0] <= t) { best = m; lo = m + 1; } else { hi = m - 1; }
+  }
+  const curScoreIdx = best >= 0 ? idx[best][1] : null;
+  if (curScoreIdx === _followCurrentIdx) return;
+  clearPlaybackFollowHighlight();
+  _followCurrentIdx = curScoreIdx;
+  if (curScoreIdx == null) return;
+  const note = S.noteIndex[curScoreIdx];
+  if (note?.svgEl) {
+    addHighlightRect(note.svgEl, '#f59e0b', 0.55, 'follow-highlight');
+    note.svgEl.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+function clearPlaybackFollowHighlight() {
+  document.querySelectorAll('.follow-highlight').forEach(el => el.remove());
+  _followCurrentIdx = null;
+}
+
+// Bump the cache-stamp whenever noteOnsets changes (closeEditTapsModal / tap-align stop).
+function bumpNoteOnsetsStamp() {
+  S._noteOnsetsStamp = (S._noteOnsetsStamp || 0) + 1;
 }
 
 // ═══════════════════════════════════════════════════════
