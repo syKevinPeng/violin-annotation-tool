@@ -1,6 +1,6 @@
 # Violin Error Annotation Tool
 
-A browser-based tool for annotating performance errors in student violin recordings. Designed for use by violin professionals — no programming required.
+A browser-based tool for annotating performance errors in student violin recordings, **plus** capturing per-note audio onset times for downstream model training and evaluation. Designed for use by violin professionals — no programming required.
 
 ## Quick Start
 
@@ -8,7 +8,10 @@ A browser-based tool for annotating performance errors in student violin recordi
 2. Load your **audio file** (WAV, MP3, OGG, or FLAC)
 3. Load the **MusicXML score** for the piece being performed
 4. Enter your **name** in the Annotator field
-5. Start annotating!
+5. Annotate in **two passes**:
+   - **Pass 1 — Errors:** mark each error type as you hear it (see below)
+   - **Pass 2 — Tap-Align:** click "🎵 Tap-Align" and tap SPACE on each note onset
+6. Click **Export Aligned JSON** when done
 
 ## How to Annotate
 
@@ -42,9 +45,43 @@ A popup will appear with fields specific to the error type:
 - Add optional **notes** describing what you heard
 - Click **Confirm** to save
 
-### Step 4: Export
+### Step 4: Tap-Align (per-note audio onset times)
 
-When finished, click **Export CSV** or **Export JSON** to download your annotations.
+After all errors are marked, click **🎵 Tap-Align** in the toolbar.
+
+The tool builds an *expected play sequence* from your error annotations:
+- **Skips** are removed from the sequence (no tap expected)
+- **Repetitions** expand the span by `times_played` (tap each pass)
+- **Note swaps** reverse the order
+- **Stop+restart** plays forward to stop, then jumps back
+
+While Tap-Align is active:
+
+| Key | Action |
+|---|---|
+| **Space** | Record a tap at the current playhead time |
+| **Backspace** | Undo last tap |
+| **P** | Play / pause audio (Space is now Tap) |
+| **Esc** | End Tap-Align (saves your taps) |
+
+The next-expected score note is highlighted in blue, and a counter shows `Tap N / M`. When you stop, the tool reports any mismatch between recorded and expected tap counts — a mismatch usually means a missed error annotation or a missed tap.
+
+### Step 5: Export
+
+| Button | What it gives you |
+|---|---|
+| **Export CSV** | Spreadsheet of error annotations only (no per-note onsets) |
+| **Export JSON** | Original annotations + raw taps + per-note onsets in one blob |
+| **Export Aligned JSON** | **One record per score note**, with `passes: [{audio_t, pass_number, status}]`. This is the format downstream model training/eval expects. |
+
+### Repetition trigger field (important)
+
+When you mark a repetition, the tool now asks **why** the passage was repeated:
+
+- **Clean repeat** — first pass was fine, the extra play is the error. Pass 1 keeps its own labels; pass 2+ becomes `repetition`.
+- **Corrective repeat** — first pass had a mistake, last pass is the corrected version. Pass 1 keeps its mistake label; the final pass becomes `clean`.
+
+If the corrective repeat fixed an underlying error (e.g., a wrong note), mark that error separately as a normal `wrong_note` annotation at its score location. The tool then composes the two: pass 1 = wrong_note at that index, pass 2 = clean.
 
 ## Playback Controls
 
@@ -90,3 +127,44 @@ All processing happens in your browser. No audio or score data is uploaded anywh
 - A modern browser (Chrome, Firefox, Safari, Edge)
 - Audio files in WAV, MP3, OGG, or FLAC format
 - Score files in MusicXML format (.xml, .musicxml, or .mxl)
+
+## Aligned JSON schema (v2)
+
+```json
+{
+  "schema_version": 2,
+  "metadata": {
+    "filename": "...",
+    "score": "...",
+    "annotator": "...",
+    "date": "ISO timestamp",
+    "num_notes": 92,
+    "num_taps": 87,
+    "num_expected": 87
+  },
+  "notes": [
+    {
+      "score_idx": 0,
+      "measure_beat": "1.1",
+      "pitch": "G4",
+      "passes": [
+        { "audio_t": 0.42, "pass_number": 1, "status": "clean" }
+      ]
+    },
+    {
+      "score_idx": 5,
+      "measure_beat": "2.1",
+      "pitch": "D5",
+      "passes": [
+        { "audio_t": 4.18, "pass_number": 1, "status": "wrong_note" },
+        { "audio_t": 6.85, "pass_number": 2, "status": "clean" }
+      ]
+    },
+    { "score_idx": 7, "measure_beat": "2.3", "pitch": "F#5",
+      "passes": [{ "audio_t": null, "pass_number": 1, "status": "skipped" }] }
+  ],
+  "annotations": [ /* original error annotations for traceability */ ]
+}
+```
+
+`status` values: `clean`, `wrong_note`, `intonation`, `pause`, `tempo_drift`, `early_late_entry`, `note_swap`, `repetition`, `stopped_restart`, `skipped`, `unaligned`.

@@ -385,6 +385,15 @@
   <button class="err-btn" data-type="early_late_entry" title="Click affected notes"><span class="key-hint">8</span> Early/Late <span class="click-hint">(2 clicks)</span></button>
   <button class="err-btn" data-type="stopped_restart" title="Click stop point, then restart point"><span class="key-hint">9</span> Stop+Restart <span class="click-hint">(2 clicks)</span></button>
   <button class="err-btn" id="btn-cancel" style="display:none;">&#x2715; Cancel</button>
+  <span style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+    <button class="err-btn" id="btn-tap-align" title="After marking errors, run Tap-Align: press SPACE on each note onset to record per-note audio times" style="background:#ecfeff; color:#0e7490; border:2px solid #06b6d4;">🎵 Tap-Align</button>
+  </span>
+</div>
+<!-- Tap-Align progress strip (shown only during tap-align mode) -->
+<div id="tap-align-bar" style="display:none; align-items:center; gap:12px; padding:6px 16px; background:#ecfeff; border-bottom:1px solid #06b6d4; font-size:13px;">
+  <strong style="color:#0e7490;">Tap-Align Active</strong>
+  <span id="tap-align-progress" style="font-family:monospace; color:#0e7490;">Tap 0 / 0</span>
+  <span style="color:#64748b; font-size:12px;">SPACE = tap • BACKSPACE = undo • P = play/pause • ESC = finish</span>
 </div>
 
 <!-- ─── Main ─── -->
@@ -430,6 +439,7 @@
       <span class="export-btns">
         <button id="btn-export-csv" title="Download as spreadsheet (opens in Excel/Google Sheets)">Export CSV</button>
         <button id="btn-export-json" title="Download as JSON (for loading back into this tool)">Export JSON</button>
+        <button id="btn-export-aligned" title="Per-note onsets + status — for downstream model training/eval. Run Tap-Align first." style="background:#ecfeff;">Export Aligned JSON</button>
         <button id="btn-import" title="Load previously saved annotations from a file">Import</button>
         <input type="file" id="import-input" accept=".csv,.json" style="display:none">
       </span>
@@ -466,11 +476,13 @@
 
 <!-- ─── Shortcut help ─── -->
 <div id="shortcut-help">
-  <kbd>Space</kbd> Play/Pause &nbsp;
+  <kbd>Space</kbd> Play/Pause (or Tap in Tap-Align) &nbsp;
   <kbd>←</kbd><kbd>→</kbd> Skip 2s &nbsp;
   <kbd>[</kbd><kbd>]</kbd> Speed &nbsp;
-  <kbd>Esc</kbd> Cancel &nbsp;
-  <kbd>1</kbd>-<kbd>9</kbd> Error types
+  <kbd>Esc</kbd> Cancel / End Tap-Align &nbsp;
+  <kbd>1</kbd>-<kbd>9</kbd> Error types &nbsp;
+  <kbd>Backspace</kbd> Undo last tap (Tap-Align) &nbsp;
+  <kbd>P</kbd> Play/Pause (Tap-Align)
 </div>
 
 <script>
@@ -478,7 +490,7 @@
 // State
 // ═══════════════════════════════════════════════════════
 const S = {
-  mode: null,           // null | 'select_start' | 'select_end' | 'popup'
+  mode: null,           // null | 'select_start' | 'select_end' | 'popup' | 'tap_align'
   currentType: null,
   startIdx: null,
   endIdx: null,
@@ -489,7 +501,14 @@ const S = {
   editingId: null,
   audioFilename: '',
   scoreFilename: '',
+  // ─── tap-align state (v2) ───
+  taps: [],             // ordered: [{ audio_t }]
+  playSequence: [],     // expected play order: [{ score_idx, pass_number, status }]
+  noteOnsets: {},       // score_idx (str) -> [{ audio_t, pass_number, status }]
+  tapPos: 0,            // current position in playSequence during tap-align
 };
+
+const SCHEMA_VERSION = 2;
 
 const TYPE_META = {
   wrong_note:       { label: 'Wrong Note',     clicks: 1, color: '#e74c3c' },
@@ -903,6 +922,10 @@ function buildTypeFields(type, startNote, endNote) {
           <option value="2" selected>2 (repeated once)</option>
           <option value="3">3 (repeated twice)</option>
           <option value="4">4+</option>
+        </select></label>
+        <label>Why was it repeated? <select id="f-rep-trigger">
+          <option value="clean" selected>Clean repeat — first pass was fine, the extra play is the error</option>
+          <option value="corrective">Corrective — first pass had a mistake, last pass is the corrected take</option>
         </select></label>`;
     case 'pause':
       return `<p>Pause after: <strong>${startNote.pitch}</strong> at ${startNote.measureBeat}</p>
@@ -1033,7 +1056,7 @@ function collectExtraFields(type) {
   switch(type) {
     case 'wrong_note': return { played_pitch: g('f-played-pitch') };
     case 'intonation': return { direction: g('f-direction'), degree: g('f-degree') };
-    case 'repetition': return { times_played: g('f-times') };
+    case 'repetition': return { times_played: g('f-times'), trigger: g('f-rep-trigger') };
     case 'pause': return { duration: g('f-pause-dur') };
     case 'tempo_drift': return { direction: g('f-drift-dir'), degree: g('f-drift-deg') };
     case 'early_late_entry': return { direction: g('f-entry-dir'), amount: g('f-entry-amt') };
@@ -1147,7 +1170,8 @@ window.editAnnotation = function(id) {
     const extra = ann.extra || {};
     const fieldMap = {
       played_pitch: 'f-played-pitch', direction: 'f-direction', degree: 'f-degree',
-      times_played: 'f-times', duration: 'f-pause-dur', pause_duration: 'f-sr-pause',
+      times_played: 'f-times', trigger: 'f-rep-trigger',
+      duration: 'f-pause-dur', pause_duration: 'f-sr-pause',
       amount: 'f-entry-amt',
     };
     for (const [key, val] of Object.entries(extra)) {
@@ -1252,6 +1276,7 @@ document.getElementById('btn-export-csv').onclick = () => {
 
 document.getElementById('btn-export-json').onclick = () => {
   const data = {
+    schema_version: SCHEMA_VERSION,
     metadata: {
       filename: S.audioFilename,
       score: S.scoreFilename,
@@ -1260,8 +1285,51 @@ document.getElementById('btn-export-json').onclick = () => {
       num_notes: S.noteIndex.length,
     },
     annotations: S.annotations,
+    taps: S.taps,                  // raw tap times (in case downstream wants to re-run alignment)
+    note_onsets: S.noteOnsets,     // per-note assigned onsets
   };
   downloadFile(JSON.stringify(data, null, 2), `annotations_${S.audioFilename.replace(/\.\w+$/,'')}.json`, 'application/json');
+};
+
+// Aligned-JSON export: per-note records, ready for downstream model training/eval.
+document.getElementById('btn-export-aligned').onclick = () => {
+  if (Object.keys(S.noteOnsets).length === 0) {
+    if (!confirm('No tap-align data yet. Export will only contain score notes with status=unaligned. Continue?')) return;
+  }
+  const notes = [];
+  for (let i = 0; i < S.noteIndex.length; i++) {
+    const ni = S.noteIndex[i];
+    const onsets = S.noteOnsets[i] || [{ audio_t: null, pass_number: 1, status: 'unaligned' }];
+    notes.push({
+      score_idx: i,
+      measure_beat: ni.measureBeat,
+      pitch: ni.pitch,
+      passes: onsets,
+    });
+  }
+  const data = {
+    schema_version: SCHEMA_VERSION,
+    metadata: {
+      filename: S.audioFilename,
+      score: S.scoreFilename,
+      annotator: document.getElementById('annotator-name').value,
+      date: new Date().toISOString(),
+      num_notes: S.noteIndex.length,
+      num_taps: S.taps.length,
+      num_expected: S.playSequence.length,
+    },
+    notes,                  // per-score-note records (the new ground-truth shape)
+    annotations: S.annotations,   // original error annotations for traceability
+  };
+  downloadFile(JSON.stringify(data, null, 2), `aligned_${S.audioFilename.replace(/\.\w+$/,'')}.json`, 'application/json');
+};
+
+document.getElementById('btn-tap-align').onclick = () => {
+  if (S.mode === 'tap_align') {
+    stopTapAlign(true);
+  } else {
+    startTapAlign();
+  }
 };
 
 document.getElementById('btn-import').onclick = () => document.getElementById('import-input').click();
@@ -1362,10 +1430,13 @@ function downloadFile(content, filename, mime) {
 // ═══════════════════════════════════════════════════════
 function saveToLocalStorage() {
   localStorage.setItem('violin_annotations', JSON.stringify({
+    schema_version: SCHEMA_VERSION,
     annotations: S.annotations,
     audioFilename: S.audioFilename,
     scoreFilename: S.scoreFilename,
     annotator: document.getElementById('annotator-name').value,
+    taps: S.taps,
+    noteOnsets: S.noteOnsets,
   }));
 }
 
@@ -1378,6 +1449,8 @@ function loadFromLocalStorage() {
         S.audioFilename = saved.audioFilename || '';
         S.scoreFilename = saved.scoreFilename || '';
         document.getElementById('annotator-name').value = saved.annotator || '';
+        S.taps = saved.taps || [];
+        S.noteOnsets = saved.noteOnsets || {};
         renderAnnotationList();
       }
     }
@@ -1388,10 +1461,279 @@ function loadFromLocalStorage() {
 setInterval(saveToLocalStorage, 30000);
 
 // ═══════════════════════════════════════════════════════
+// Tap-Align Mode (v2)
+// ═══════════════════════════════════════════════════════
+
+// Per-note labels that DON'T change cardinality of the play sequence.
+// (Span-based & single-note errors that only affect status, not order.)
+const PER_NOTE_LABEL_TYPES = new Set([
+  'wrong_note', 'intonation', 'pause', 'tempo_drift', 'early_late_entry'
+]);
+
+/**
+ * Build the expected audio→score play sequence by walking the score
+ * and applying error annotations as edits. Returns an array of
+ * { score_idx, pass_number, status } records, one per expected audio onset.
+ *
+ * Skips produce no records (those score notes are unaligned).
+ * Repetitions emit the span k times with appropriate clean/repetition labels.
+ * Note-swaps emit the second clicked note before the first.
+ * Stopped+restart emits notes up to stop, then jumps back and replays.
+ *
+ * Single-note error labels (wrong_note, intonation, etc.) are applied as
+ * status overlays in the relevant pass.
+ */
+function buildPlaySequence(noteIndex, annotations) {
+  const N = noteIndex.length;
+  const seq = [];
+  const passCounter = new Array(N).fill(0);
+
+  // Index annotations by their starting score index for fast lookup.
+  const byStart = new Map();           // startIdx -> [annotation, ...]
+  const byNote = [];                   // score_idx -> [annotation, ...] (covers any note in span)
+  for (let i = 0; i < N; i++) byNote.push([]);
+  for (const a of annotations) {
+    if (!byStart.has(a.startIdx)) byStart.set(a.startIdx, []);
+    byStart.get(a.startIdx).push(a);
+    const lo = Math.min(a.startIdx, a.endIdx);
+    const hi = Math.max(a.startIdx, a.endIdx);
+    for (let i = lo; i <= hi; i++) byNote[i].push(a);
+  }
+
+  function statusForNote(idx, defaultStatus = 'clean') {
+    // First non-structural annotation covering this note wins.
+    for (const a of byNote[idx]) {
+      if (PER_NOTE_LABEL_TYPES.has(a.type)) return a.type;
+    }
+    return defaultStatus;
+  }
+
+  let i = 0;
+  while (i < N) {
+    const here = byStart.get(i) || [];
+
+    // Structural priority: skip > stopped_restart > repetition > note_swap.
+    const skip = here.find(a => a.type === 'skip');
+    if (skip) {
+      // Skipped notes produce no audio onset → no entries in seq.
+      // assignTapsToSequence later marks them with status='skipped'.
+      i = skip.endIdx + 1;
+      continue;
+    }
+
+    const sr = here.find(a => a.type === 'stopped_restart');
+    if (sr) {
+      // Play forward to stop, then jump back to restart and continue.
+      // Convention: startIdx=stop, endIdx=restart (annotator clicks stop first, then restart-from).
+      const stopIdx = sr.startIdx;
+      const restartIdx = sr.endIdx;
+      // Pass 1: play this note then stop
+      passCounter[stopIdx]++;
+      seq.push({ score_idx: stopIdx, pass_number: passCounter[stopIdx], status: statusForNote(stopIdx, 'stopped_restart') });
+      // Pass 2: jump back to restart and continue from there
+      let j = restartIdx;
+      // Continue normal iteration from restart
+      while (j <= stopIdx) {
+        passCounter[j]++;
+        seq.push({ score_idx: j, pass_number: passCounter[j], status: statusForNote(j, passCounter[j] > 1 ? 'stopped_restart' : 'clean') });
+        j++;
+      }
+      i = stopIdx + 1;
+      continue;
+    }
+
+    const rep = here.find(a => a.type === 'repetition');
+    if (rep) {
+      const times = parseInt(rep.extra?.times_played) || 2;
+      const trigger = rep.extra?.trigger || 'clean';
+      // Label rule:
+      //   clean trigger:      pass 1 = statusForNote (preserves any underlying error);
+      //                       passes 2..k = 'repetition' (the spurious extra plays).
+      //   corrective trigger: passes 1..(k-1) = statusForNote (the mistake);
+      //                       pass k         = 'clean' (forced — the corrected take).
+      for (let pass = 1; pass <= times; pass++) {
+        for (let j = rep.startIdx; j <= rep.endIdx; j++) {
+          passCounter[j]++;
+          let status;
+          if (trigger === 'clean') {
+            status = (pass === 1) ? statusForNote(j, 'clean') : 'repetition';
+          } else { // corrective
+            status = (pass === times) ? 'clean' : statusForNote(j, 'clean');
+          }
+          seq.push({ score_idx: j, pass_number: passCounter[j], status });
+        }
+      }
+      i = rep.endIdx + 1;
+      continue;
+    }
+
+    const swap = here.find(a => a.type === 'note_swap');
+    if (swap && swap.startIdx !== swap.endIdx) {
+      // Audio order is reversed: emit endIdx first, then startIdx.
+      passCounter[swap.endIdx]++;
+      seq.push({ score_idx: swap.endIdx, pass_number: passCounter[swap.endIdx], status: 'note_swap' });
+      passCounter[swap.startIdx]++;
+      seq.push({ score_idx: swap.startIdx, pass_number: passCounter[swap.startIdx], status: 'note_swap' });
+      i = swap.endIdx + 1;
+      continue;
+    }
+
+    // Default: emit one record for this note.
+    passCounter[i]++;
+    seq.push({ score_idx: i, pass_number: passCounter[i], status: statusForNote(i, 'clean') });
+    i++;
+  }
+
+  return seq;
+}
+
+/** Assign tap times to the play sequence. Returns noteOnsets map.
+ *
+ * Status semantics for the exported per-note records:
+ *   'skipped'   — note is in the score but not in the play sequence (annotator marked a `skip`)
+ *   'untapped'  — note is in the play sequence but the annotator didn't tap it (e.g. tap-align ended early)
+ *   anything else — see playSequence record's `status` (clean / wrong_note / repetition / ...)
+ */
+function assignTapsToSequence(taps, seq, noteIndex) {
+  const onsets = {};
+  const seqIdxSet = new Set(seq.map(r => r.score_idx));
+  for (let i = 0; i < noteIndex.length; i++) {
+    if (!seqIdxSet.has(i)) {
+      onsets[i] = [{ audio_t: null, pass_number: 1, status: 'skipped' }];
+    } else {
+      onsets[i] = [];
+    }
+  }
+  const M = Math.min(taps.length, seq.length);
+  for (let k = 0; k < M; k++) {
+    const r = seq[k];
+    onsets[r.score_idx].push({
+      audio_t: taps[k].audio_t,
+      pass_number: r.pass_number,
+      status: r.status,
+    });
+  }
+  // For sequence entries past the last tap, mark the corresponding score
+  // note as 'untapped' so downstream consumers can distinguish "annotator
+  // didn't tap" from "deliberately skipped".
+  for (let k = M; k < seq.length; k++) {
+    const r = seq[k];
+    onsets[r.score_idx].push({
+      audio_t: null,
+      pass_number: r.pass_number,
+      status: 'untapped',
+    });
+  }
+  return onsets;
+}
+
+function startTapAlign() {
+  if (S.noteIndex.length === 0) {
+    alert('Load a score first.');
+    return;
+  }
+  if (!S.wavesurfer) {
+    alert('Load audio first.');
+    return;
+  }
+  // Build sequence from current annotations.
+  S.playSequence = buildPlaySequence(S.noteIndex, S.annotations);
+  S.taps = [];
+  S.tapPos = 0;
+  S.mode = 'tap_align';
+  document.getElementById('btn-tap-align').textContent = '■ Stop Tap-Align';
+  document.getElementById('btn-tap-align').classList.add('active');
+  document.getElementById('tap-align-bar').style.display = 'flex';
+  updateTapAlignDisplay();
+  highlightExpectedNote();
+  // Seek to start and play.
+  if (typeof S.wavesurfer.setTime === 'function') S.wavesurfer.setTime(0);
+  S.wavesurfer.play();
+  showStatus('Tap-Align: press SPACE on each note onset, BACKSPACE to undo, ESC to stop');
+}
+
+function stopTapAlign(commit = true) {
+  if (S.mode !== 'tap_align') return;
+  S.wavesurfer?.pause?.();
+  document.getElementById('btn-tap-align').textContent = '🎵 Tap-Align';
+  document.getElementById('btn-tap-align').classList.remove('active');
+  document.getElementById('tap-align-bar').style.display = 'none';
+  clearExpectedHighlight();
+  S.mode = null;
+  if (commit) {
+    S.noteOnsets = assignTapsToSequence(S.taps, S.playSequence, S.noteIndex);
+    saveToLocalStorage();
+    const got = S.taps.length;
+    const expected = S.playSequence.length;
+    const diff = got - expected;
+    let msg = `Tap-Align done: ${got} taps recorded for ${expected} expected onsets.`;
+    if (diff !== 0) {
+      msg += ` ⚠ Mismatch ${diff > 0 ? '+' : ''}${diff} — check error annotations or re-tap.`;
+    }
+    alert(msg);
+  }
+  showStatus('');
+}
+
+function recordTap() {
+  if (S.mode !== 'tap_align' || !S.wavesurfer) return;
+  const t = S.wavesurfer.getCurrentTime?.();
+  if (t == null) return;
+  S.taps.push({ audio_t: t });
+  S.tapPos = S.taps.length;
+  updateTapAlignDisplay();
+  highlightExpectedNote();
+}
+
+function undoLastTap() {
+  if (S.mode !== 'tap_align' || S.taps.length === 0) return;
+  S.taps.pop();
+  S.tapPos = S.taps.length;
+  updateTapAlignDisplay();
+  highlightExpectedNote();
+}
+
+function updateTapAlignDisplay() {
+  const el = document.getElementById('tap-align-progress');
+  if (!el) return;
+  const got = S.taps.length;
+  const expected = S.playSequence.length;
+  const next = S.playSequence[got];
+  let nextText = next
+    ? `next: ${S.noteIndex[next.score_idx]?.measureBeat || '?'} (${S.noteIndex[next.score_idx]?.pitch || '?'})`
+    : 'sequence complete';
+  el.textContent = `Tap ${got} / ${expected}  •  ${nextText}`;
+}
+
+function highlightExpectedNote() {
+  clearExpectedHighlight();
+  const next = S.playSequence[S.taps.length];
+  if (!next) return;
+  const note = S.noteIndex[next.score_idx];
+  if (note?.svgEl) {
+    addHighlightRect(note.svgEl, '#3b82f6', 0.5, 'expected-highlight');
+    note.svgEl.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+function clearExpectedHighlight() {
+  document.querySelectorAll('.expected-highlight').forEach(el => el.remove());
+}
+
+// ═══════════════════════════════════════════════════════
 // Keyboard Shortcuts
 // ═══════════════════════════════════════════════════════
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+  // Tap-Align mode intercepts Space/Backspace before the default handlers.
+  if (S.mode === 'tap_align') {
+    if (e.key === ' ') { e.preventDefault(); recordTap(); return; }
+    if (e.key === 'Backspace') { e.preventDefault(); undoLastTap(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); stopTapAlign(true); return; }
+    if (e.key === 'p' || e.key === 'P') { e.preventDefault(); S.wavesurfer?.playPause(); return; }
+    // fall through for other keys
+  }
 
   switch(e.key) {
     case ' ':
