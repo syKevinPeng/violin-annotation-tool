@@ -465,10 +465,9 @@
       </span>
     </label>
     <label>Notes: <input type="text" id="popup-notes" placeholder="Optional description" style="width:100%"></label>
-    <div class="popup-audio-row" style="display:flex; align-items:center; gap:8px; margin:10px 0; padding:8px 10px; background:#f9fafb; border:1px solid var(--line); border-radius:6px; font-size:13px;">
-      <span>Audio: <strong id="popup-audio-time" style="font-family:monospace">--:--</strong></span>
-      <button type="button" id="btn-popup-preview" style="font-size:12px; padding:3px 8px; border:1px solid var(--line); border-radius:4px; background:var(--panel); cursor:pointer;">▶ Preview 2s</button>
-      <button type="button" id="btn-popup-use-playhead" style="font-size:12px; padding:3px 8px; border:1px solid var(--line); border-radius:4px; background:var(--panel); cursor:pointer;">↻ Use current playhead</button>
+    <!-- audio-time field removed in v2: per-note onsets come from Tap-Align. -->
+    <div style="font-size:12px; color:var(--muted); margin:6px 0 10px; padding:6px 10px; background:#f9fafb; border-radius:6px;">
+      Audio time will be set automatically when you run <strong>🎵 Tap-Align</strong>.
     </div>
     <div class="popup-actions">
       <button id="btn-popup-confirm">Confirm</button>
@@ -884,8 +883,6 @@ function cancelAnnotation() {
   S.currentType = null;
   S.startIdx = null;
   S.endIdx = null;
-  S.startAudioTime = null;
-  S.popupAudioTime = null;
   clearTimeout(S._previewTimer);
   S.editingId = null;
   document.querySelectorAll('.err-btn').forEach(b => b.classList.remove('active'));
@@ -903,10 +900,9 @@ function onNoteClicked(idx) {
 
   if (S.mode === 'select_start') {
     S.startIdx = idx;
-    // Stamp the audio playhead so we can seek back here later, and
-    // auto-pause so the playhead doesn't drift past the error while the
-    // annotator finishes picking notes / filling the popup.
-    S.startAudioTime = S.wavesurfer?.getCurrentTime?.() ?? null;
+    // Auto-pause so the playhead doesn't drift past the error while the
+    // annotator finishes picking notes / filling the popup. Per-note audio
+    // timing is captured later by Tap-Align, not at click time.
     if (S.wavesurfer?.isPlaying?.()) S.wavesurfer.pause();
     highlightNoteTemp(idx, meta.color);
 
@@ -962,12 +958,6 @@ function showDetailPopup() {
     b.classList.toggle('selected', b.dataset.sev === '2');
   });
   document.getElementById('popup-notes').value = '';
-
-  // Initialize the popup's audio-time control. For new annotations
-  // S.startAudioTime is the playhead at first-click; for Edits, the
-  // caller (editAnnotation) overwrites S.popupAudioTime afterwards.
-  S.popupAudioTime = S.startAudioTime;
-  updatePopupAudioDisplay();
 
   document.getElementById('popup-overlay').classList.add('visible');
 
@@ -1069,34 +1059,7 @@ document.querySelectorAll('.severity-btns button').forEach(btn => {
   });
 });
 
-// Popup audio-time controls
-function updatePopupAudioDisplay() {
-  const el = document.getElementById('popup-audio-time');
-  if (!el) return;
-  el.textContent = (S.popupAudioTime != null) ? fmtTime(S.popupAudioTime) : '--:--';
-}
-
-document.getElementById('btn-popup-use-playhead').onclick = () => {
-  const t = S.wavesurfer?.getCurrentTime?.();
-  if (t == null) return;
-  S.popupAudioTime = t;
-  updatePopupAudioDisplay();
-};
-
-document.getElementById('btn-popup-preview').onclick = () => {
-  if (!S.wavesurfer || S.popupAudioTime == null) return;
-  const t = Math.max(0, S.popupAudioTime);
-  if (typeof S.wavesurfer.setTime === 'function') S.wavesurfer.setTime(t);
-  else {
-    const dur = S.wavesurfer.getDuration?.() || 0;
-    if (dur > 0) S.wavesurfer.seekTo(t / dur);
-  }
-  S.wavesurfer.play();
-  clearTimeout(S._previewTimer);
-  S._previewTimer = setTimeout(() => {
-    if (S.wavesurfer?.isPlaying?.()) S.wavesurfer.pause();
-  }, 2000);
-};
+// (audio-time popup controls removed in v2 — onsets come from Tap-Align)
 
 // Confirm
 document.getElementById('btn-popup-confirm').onclick = () => {
@@ -1109,7 +1072,6 @@ document.getElementById('btn-popup-confirm').onclick = () => {
     if (ann) {
       ann.severity = severity;
       ann.notes = notes;
-      ann.audioTime = S.popupAudioTime ?? null;
       ann.extra = collectExtraFields(ann.type);
     }
     S.editingId = null;
@@ -1126,7 +1088,6 @@ document.getElementById('btn-popup-confirm').onclick = () => {
       endPitch: S.noteIndex[S.endIdx].pitch,
       severity: severity,
       notes: notes,
-      audioTime: S.popupAudioTime ?? null,
       extra: collectExtraFields(S.currentType),
     };
     S.annotations.push(ann);
@@ -1174,9 +1135,10 @@ function renderAnnotationList() {
     const loc = ann.startIdx === ann.endIdx
       ? escHtml(ann.startMeasureBeat)
       : `${escHtml(ann.startMeasureBeat)} → ${escHtml(ann.endMeasureBeat)}`;
-    const seekable = ann.audioTime != null;
+    const t = audioTimeForAnnotation(ann);
+    const seekable = t != null;
     return `<div class="ann-item" data-id="${ann.id}" style="border-left-color:${meta.color}; cursor:${seekable ? 'pointer' : 'default'}"
-      title="${seekable ? 'Click to seek audio to this error' : 'No audio time recorded for this annotation'}"
+      title="${seekable ? 'Click to seek audio to this error' : 'Run Tap-Align to enable audio seek for this annotation'}"
       onmouseenter="previewAnnotation(${ann.id})" onmouseleave="clearAnnotationPreview()"
       onclick="seekToAnnotation(${ann.id})">
       <span class="ann-num" style="color:var(--muted);min-width:28px;font-size:11px;">#${i+1}</span>
@@ -1190,6 +1152,17 @@ function renderAnnotationList() {
       </span>
     </div>`;
   }).join('');
+}
+
+// Resolve audio time for an annotation: prefer Tap-Align onset of the
+// start note; fall back to any legacy `audioTime` field (back-compat).
+function audioTimeForAnnotation(ann) {
+  const onsets = S.noteOnsets?.[ann.startIdx];
+  if (onsets) {
+    const first = onsets.find(p => p.audio_t != null);
+    if (first) return first.audio_t;
+  }
+  return ann.audioTime != null ? ann.audioTime : null;
 }
 
 window.previewAnnotation = function(id) {
@@ -1220,13 +1193,15 @@ window.clearAnnotationPreview = function() {
 
 window.seekToAnnotation = function(id) {
   const ann = S.annotations.find(a => a.id === id);
-  if (!ann || ann.audioTime == null || !S.wavesurfer) return;
-  const t = Math.max(0, ann.audioTime);
+  if (!ann || !S.wavesurfer) return;
+  const t = audioTimeForAnnotation(ann);
+  if (t == null) return;
+  const tt = Math.max(0, t);
   if (typeof S.wavesurfer.setTime === 'function') {
-    S.wavesurfer.setTime(t);
+    S.wavesurfer.setTime(tt);
   } else if (typeof S.wavesurfer.seekTo === 'function') {
     const dur = S.wavesurfer.getDuration?.() || 0;
-    if (dur > 0) S.wavesurfer.seekTo(t / dur);
+    if (dur > 0) S.wavesurfer.seekTo(tt / dur);
   }
 };
 
@@ -1246,7 +1221,6 @@ window.editAnnotation = function(id) {
   S.currentType = ann.type;
   S.startIdx = ann.startIdx;
   S.endIdx = ann.endIdx;
-  S.startAudioTime = ann.audioTime ?? null;  // so showDetailPopup seeds the popup correctly
   S.mode = 'popup';
 
   showDetailPopup();
@@ -1254,8 +1228,6 @@ window.editAnnotation = function(id) {
   // Pre-fill existing values after popup renders
   setTimeout(() => {
     document.getElementById('popup-notes').value = ann.notes || '';
-    S.popupAudioTime = ann.audioTime ?? null;
-    updatePopupAudioDisplay();
     document.querySelectorAll('.severity-btns button').forEach(b => {
       b.classList.toggle('selected', b.dataset.sev === String(ann.severity));
     });
@@ -1351,16 +1323,21 @@ document.getElementById('btn-export-csv').onclick = () => {
     `# date: ${new Date().toISOString().split('T')[0]}`,
     `# num_notes: ${S.noteIndex.length}`,
     '',
-    'type,start_measure_beat,end_measure_beat,start_note_idx,end_note_idx,start_pitch,end_pitch,severity,extra_fields,notes,audio_time',
+    'type,start_measure_beat,end_measure_beat,start_note_idx,end_note_idx,start_pitch,end_pitch,severity,extra_fields,notes,start_audio_t,end_audio_t',
   ];
   for (const ann of S.annotations) {
     const extra = JSON.stringify(ann.extra).replace(/"/g, '""');
     const notes = (ann.notes || '').replace(/"/g, '""');
+    // Derive audio times from Tap-Align onsets (with v1 back-compat fallback).
+    const tStart = audioTimeForAnnotation(ann);
+    const endOnsets = S.noteOnsets?.[ann.endIdx];
+    const tEnd = endOnsets ? (endOnsets.find(p => p.audio_t != null)?.audio_t ?? null) : null;
     lines.push([
       ann.type, ann.startMeasureBeat, ann.endMeasureBeat,
       ann.startIdx, ann.endIdx, ann.startPitch, ann.endPitch,
       ann.severity, `"${extra}"`, `"${notes}"`,
-      ann.audioTime != null ? ann.audioTime.toFixed(3) : ''
+      tStart != null ? tStart.toFixed(3) : '',
+      tEnd != null ? tEnd.toFixed(3) : ''
     ].join(','));
   }
   downloadFile(lines.join('\n'), `annotations_${S.audioFilename.replace(/\.\w+$/,'')}.csv`, 'text/csv');
@@ -1471,6 +1448,9 @@ function parseCSV(text) {
       severity: parseInt(fields[7]) || 2,
       extra: fields[8] ? (() => { try { return JSON.parse(fields[8]); } catch(e) { return {}; } })() : {},
       notes: fields[9] || '',
+      // v1 back-compat: legacy CSVs had a single audio_time at fields[10].
+      // v2 CSVs export start_audio_t / end_audio_t but those are derived from
+      // Tap-Align onsets and we don't re-import them as annotation state.
       audioTime: fields[10] !== undefined && fields[10] !== '' ? parseFloat(fields[10]) : null,
     });
   }

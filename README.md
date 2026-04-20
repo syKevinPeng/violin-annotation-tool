@@ -45,6 +45,8 @@ A popup will appear with fields specific to the error type:
 - Add optional **notes** describing what you heard
 - Click **Confirm** to save
 
+You don't need to record audio time for each error — it's captured per-note during the **Tap-Align** pass below, which is much more accurate than a single timestamp at click time.
+
 ### Step 4: Tap-Align (per-note audio onset times)
 
 After all errors are marked, click **🎵 Tap-Align** in the toolbar.
