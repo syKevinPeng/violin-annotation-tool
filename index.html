@@ -490,7 +490,7 @@
   <div id="edit-taps-modal" style="pointer-events:auto; background:white; border:1px solid #d1d5db; border-radius:14px; padding:16px 20px; height:100%; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,0.25); font-size:13px;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid #e5e7eb; gap:8px;">
       <h2 style="font-size:17px; margin:0;">✎ Edit Taps</h2>
-      <span style="color:#64748b; font-size:11px;">Audio stays active — click the waveform or use <kbd>Space</kbd> in the main view</span>
+      <span style="color:#64748b; font-size:11px;"><kbd>Space</kbd> = record tap at playhead • <kbd>P</kbd> = play / pause</span>
       <button id="btn-edit-taps-play" type="button" title="Play / pause the audio without leaving this panel" style="padding:4px 12px; border:1px solid #06b6d4; border-radius:6px; background:#ecfeff; color:#0e7490; cursor:pointer; font-size:13px; font-weight:600;">▶ Play</button>
       <button id="btn-edit-taps-x" type="button" style="font-size:16px; padding:3px 10px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer;">×</button>
     </div>
@@ -2126,6 +2126,34 @@ function insertTapAtTop() {
   renderEditTaps();
 }
 
+/** Insert a new tap at the current playhead, placed in chronological
+ *  order so the table stays sorted. Returns the index it was inserted at. */
+function recordTapAtCurrentTime() {
+  if (!S.wavesurfer) return -1;
+  const t = S.wavesurfer.getCurrentTime?.();
+  if (t == null) return -1;
+  // Binary search for the first index i with audio_t > t.
+  let lo = 0, hi = S.taps.length;
+  while (lo < hi) {
+    const m = (lo + hi) >> 1;
+    const tt = S.taps[m].audio_t;
+    if (tt == null || tt > t) hi = m; else lo = m + 1;
+  }
+  S.taps.splice(lo, 0, { audio_t: t });
+  return lo;
+}
+
+function flashTapRow(i) {
+  // Re-render to update mapping columns, then briefly flash the new row.
+  renderEditTaps();
+  const row = document.querySelector(`#edit-taps-list tr[data-i="${i}"]`);
+  if (!row) return;
+  const orig = row.style.background;
+  row.style.background = '#bbf7d0';
+  row.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  setTimeout(() => { row.style.background = orig; }, 350);
+}
+
 function clearAllTaps() {
   if (S.taps.length === 0) return;
   if (!confirm(`Delete all ${S.taps.length} recorded taps? Use Cancel on the modal to undo, or Save to commit.`)) return;
@@ -2476,6 +2504,20 @@ document.addEventListener('keydown', (e) => {
     if (e.key === ' ') { e.preventDefault(); recordTap(); return; }
     if (e.key === 'Backspace') { e.preventDefault(); undoLastTap(); return; }
     if (e.key === 'Escape') { e.preventDefault(); stopTapAlign(true); return; }
+    if (e.key === 'p' || e.key === 'P') { e.preventDefault(); S.wavesurfer?.playPause(); return; }
+    // fall through for other keys
+  }
+
+  // When the Edit Taps panel is open, Space inserts a new tap at the
+  // current playhead (in chronological position). P = play/pause.
+  const editTapsOpen = document.getElementById('edit-taps-overlay').style.display === 'block';
+  if (editTapsOpen) {
+    if (e.key === ' ') {
+      e.preventDefault();
+      const i = recordTapAtCurrentTime();
+      if (i >= 0) flashTapRow(i);
+      return;
+    }
     if (e.key === 'p' || e.key === 'P') { e.preventDefault(); S.wavesurfer?.playPause(); return; }
     // fall through for other keys
   }
