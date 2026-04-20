@@ -485,12 +485,14 @@
   </div>
 </div>
 
-<!-- ─── Edit Taps Modal ─── -->
-<div id="edit-taps-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:200; justify-content:center; align-items:center;">
-  <div id="edit-taps-modal" style="background:white; border-radius:14px; padding:22px 26px; max-width:860px; width:94%; max-height:88vh; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,0.3); font-size:13px;">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #e5e7eb;">
-      <h2 style="font-size:18px; margin:0;">✎ Edit Taps</h2>
-      <button id="btn-edit-taps-x" type="button" style="font-size:18px; padding:4px 12px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer;">×</button>
+<!-- ─── Edit Taps Panel (non-blocking, right-side) ─── -->
+<div id="edit-taps-overlay" style="display:none; position:fixed; top:12px; right:12px; bottom:12px; width:min(720px, 55vw); z-index:150; pointer-events:none;">
+  <div id="edit-taps-modal" style="pointer-events:auto; background:white; border:1px solid #d1d5db; border-radius:14px; padding:16px 20px; height:100%; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,0.25); font-size:13px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid #e5e7eb; gap:8px;">
+      <h2 style="font-size:17px; margin:0;">✎ Edit Taps</h2>
+      <span style="color:#64748b; font-size:11px;">Audio stays active — click the waveform or use <kbd>Space</kbd> in the main view</span>
+      <button id="btn-edit-taps-play" type="button" title="Play / pause the audio without leaving this panel" style="padding:4px 12px; border:1px solid #06b6d4; border-radius:6px; background:#ecfeff; color:#0e7490; cursor:pointer; font-size:13px; font-weight:600;">▶ Play</button>
+      <button id="btn-edit-taps-x" type="button" style="font-size:16px; padding:3px 10px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer;">×</button>
     </div>
     <div id="edit-taps-summary" style="padding:8px 10px; font-size:13px; color:#0e7490; background:#ecfeff; border-radius:6px; margin-bottom:10px;"></div>
     <div id="edit-taps-list" style="overflow:auto; flex:1; border:1px solid #e5e7eb; border-radius:6px;"></div>
@@ -712,12 +714,17 @@ function initAudio(file) {
     const dur = S.wavesurfer.getDuration() || 0;
     document.getElementById('time-display').textContent = `${fmtTime(t)} / ${fmtTime(dur)}`;
     updatePlaybackFollowHighlight(t);
+    updateEditTapsRowHighlight(t);
   });
 
-  S.wavesurfer.on('play', () => { document.getElementById('btn-play').textContent = '⏸'; });
+  S.wavesurfer.on('play', () => {
+    document.getElementById('btn-play').textContent = '⏸';
+    updateEditTapsPlayButton?.();
+  });
   S.wavesurfer.on('pause', () => {
     document.getElementById('btn-play').textContent = '▶';
     clearPlaybackFollowHighlight();
+    updateEditTapsPlayButton?.();
   });
 }
 
@@ -1952,7 +1959,9 @@ function openEditTapsModal() {
   }
   _editTapsSnapshot = JSON.parse(JSON.stringify(S.taps));
   renderEditTaps();
-  document.getElementById('edit-taps-overlay').style.display = 'flex';
+  document.getElementById('edit-taps-overlay').style.display = 'block';
+  updateEditTapsPlayButton();
+  _editTapsCurrentRow = null;
 }
 
 function closeEditTapsModal(save) {
@@ -1983,6 +1992,7 @@ function closeEditTapsModal(save) {
   }
   renderAnnotationList();
   document.getElementById('edit-taps-overlay').style.display = 'none';
+  _editTapsCurrentRow = null;
 }
 
 function renderEditTaps() {
@@ -2233,9 +2243,16 @@ document.getElementById('btn-edit-taps-save').onclick = () => closeEditTapsModal
 document.getElementById('btn-edit-taps-insert-top').onclick = insertTapAtTop;
 document.getElementById('btn-edit-taps-clear-all').onclick = clearAllTaps;
 document.getElementById('btn-edit-taps-snap').onclick = snapTapsToOnsets;
-document.getElementById('edit-taps-overlay').onclick = (e) => {
-  if (e.target.id === 'edit-taps-overlay') closeEditTapsModal(false);
+document.getElementById('btn-edit-taps-play').onclick = () => {
+  if (!S.wavesurfer) return;
+  S.wavesurfer.playPause();
 };
+// Reflect play/pause state in the panel's play button.
+function updateEditTapsPlayButton() {
+  const b = document.getElementById('btn-edit-taps-play');
+  if (!b) return;
+  b.textContent = S.wavesurfer?.isPlaying?.() ? '⏸ Pause' : '▶ Play';
+}
 
 function startTapAlign() {
   if (S.noteIndex.length === 0) {
@@ -2417,6 +2434,35 @@ function clearPlaybackFollowHighlight() {
 // Bump the cache-stamp whenever noteOnsets changes (closeEditTapsModal / tap-align stop).
 function bumpNoteOnsetsStamp() {
   S._noteOnsetsStamp = (S._noteOnsetsStamp || 0) + 1;
+}
+
+// Keep the Edit Taps table in sync with audio playback: highlight the
+// row for the tap whose audio_t is the largest value ≤ current playhead.
+let _editTapsCurrentRow = null;
+function updateEditTapsRowHighlight(t) {
+  const overlay = document.getElementById('edit-taps-overlay');
+  if (!overlay || overlay.style.display === 'none') return;
+  // Linear scan is fine (typical piece has <500 taps).
+  let bestI = -1, bestT = -Infinity;
+  for (let i = 0; i < S.taps.length; i++) {
+    const tt = S.taps[i].audio_t;
+    if (tt == null) continue;
+    if (tt <= t && tt > bestT) { bestT = tt; bestI = i; }
+  }
+  if (bestI === _editTapsCurrentRow) return;
+  // Clear old highlight
+  if (_editTapsCurrentRow != null) {
+    const prev = document.querySelector(`#edit-taps-list tr[data-i="${_editTapsCurrentRow}"]`);
+    if (prev) prev.style.background = '';
+  }
+  _editTapsCurrentRow = bestI;
+  if (bestI < 0) return;
+  const row = document.querySelector(`#edit-taps-list tr[data-i="${bestI}"]`);
+  if (row) {
+    row.style.background = '#fef3c7';
+    // Keep it in view without thrashing.
+    row.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }
 }
 
 // ═══════════════════════════════════════════════════════
