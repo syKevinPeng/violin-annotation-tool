@@ -392,11 +392,18 @@
   </span>
 </div>
 <!-- Tap-Align progress strip (shown only during tap-align mode) -->
-<div id="tap-align-bar" style="display:none; align-items:center; gap:12px; padding:6px 16px; background:#ecfeff; border-bottom:1px solid #06b6d4; font-size:13px;">
-  <strong style="color:#0e7490;">🎵 Tap-Align Active</strong>
-  <span style="color:#0e7490;">Press <kbd>Space</kbd> on each note's onset →</span>
-  <span id="tap-align-progress" style="font-family:monospace; color:#0e7490; font-weight:600;">Tap 0 / 0</span>
-  <span style="color:#64748b; font-size:12px; margin-left:auto;"><kbd>Backspace</kbd> undo • <kbd>P</kbd> play/pause • <kbd>Esc</kbd> finish</span>
+<div id="tap-align-bar" style="display:none; flex-direction:column; gap:0; padding:0; background:#ecfeff; border-bottom:1px solid #06b6d4;">
+  <div style="display:flex; align-items:center; gap:12px; padding:6px 16px; font-size:13px;">
+    <strong style="color:#0e7490;">🎵 Tap-Align Active</strong>
+    <span style="color:#0e7490;">Press <kbd>Space</kbd> on each note's onset →</span>
+    <span id="tap-align-progress" style="font-family:monospace; color:#0e7490; font-weight:600;">Tap 0 / 0</span>
+    <span id="tap-align-percent" style="font-family:monospace; color:#0e7490; font-size:12px;">(0%)</span>
+    <span style="color:#64748b; font-size:12px; margin-left:auto;"><kbd>Backspace</kbd> undo • <kbd>P</kbd> play/pause • <kbd>Esc</kbd> finish</span>
+  </div>
+  <!-- Progress bar (fills as taps are recorded) -->
+  <div style="height:6px; background:#cffafe;">
+    <div id="tap-align-progress-bar" style="height:100%; width:0%; background:linear-gradient(90deg,#06b6d4,#0891b2); transition:width 0.15s ease-out;"></div>
+  </div>
 </div>
 
 <!-- ─── Main ─── -->
@@ -1887,6 +1894,8 @@ function startTapAlign() {
   S.taps = [];
   S.tapPos = 0;
   S.mode = 'tap_align';
+  // Clear any prior recorded-tap highlights from a previous run.
+  clearRecordedTapHighlights();
   document.getElementById('btn-tap-align').textContent = '■ Stop Tap-Align';
   document.getElementById('btn-tap-align').classList.add('active');
   document.getElementById('tap-align-bar').style.display = 'flex';
@@ -1929,8 +1938,19 @@ function recordTap() {
   if (S.mode !== 'tap_align' || !S.wavesurfer) return;
   const t = S.wavesurfer.getCurrentTime?.();
   if (t == null) return;
+  // The just-recorded tap maps to playSequence[S.taps.length] BEFORE we push.
+  const seqRecord = S.playSequence[S.taps.length];
   S.taps.push({ audio_t: t });
   S.tapPos = S.taps.length;
+  // Persistent green highlight on the just-tapped score note.
+  if (seqRecord) {
+    const note = S.noteIndex[seqRecord.score_idx];
+    if (note?.svgEl) {
+      // Use a darker green for repeated passes so visual stacking is obvious.
+      const opacity = seqRecord.pass_number > 1 ? 0.55 : 0.32;
+      addHighlightRect(note.svgEl, '#10b981', opacity, 'tap-recorded-highlight');
+    }
+  }
   updateTapAlignDisplay();
   highlightExpectedNote();
 }
@@ -1939,12 +1959,17 @@ function undoLastTap() {
   if (S.mode !== 'tap_align' || S.taps.length === 0) return;
   S.taps.pop();
   S.tapPos = S.taps.length;
+  // Remove the most recently-added recorded-tap highlight (the last DOM rect with that class).
+  const recs = document.querySelectorAll('.tap-recorded-highlight');
+  if (recs.length > 0) recs[recs.length - 1].remove();
   updateTapAlignDisplay();
   highlightExpectedNote();
 }
 
 function updateTapAlignDisplay() {
   const el = document.getElementById('tap-align-progress');
+  const pct = document.getElementById('tap-align-percent');
+  const bar = document.getElementById('tap-align-progress-bar');
   if (!el) return;
   const got = S.taps.length;
   const expected = S.playSequence.length;
@@ -1953,6 +1978,9 @@ function updateTapAlignDisplay() {
     ? `next: ${S.noteIndex[next.score_idx]?.measureBeat || '?'} (${S.noteIndex[next.score_idx]?.pitch || '?'})`
     : 'sequence complete';
   el.textContent = `Tap ${got} / ${expected}  •  ${nextText}`;
+  const pctVal = expected > 0 ? Math.min(100, Math.round((got / expected) * 100)) : 0;
+  if (pct) pct.textContent = `(${pctVal}%)`;
+  if (bar) bar.style.width = `${pctVal}%`;
 }
 
 function highlightExpectedNote() {
@@ -1968,6 +1996,10 @@ function highlightExpectedNote() {
 
 function clearExpectedHighlight() {
   document.querySelectorAll('.expected-highlight').forEach(el => el.remove());
+}
+
+function clearRecordedTapHighlights() {
+  document.querySelectorAll('.tap-recorded-highlight').forEach(el => el.remove());
 }
 
 // ═══════════════════════════════════════════════════════
