@@ -387,6 +387,7 @@
   <button class="err-btn" data-type="stopped_restart" title="Click stop point, then restart point"><span class="key-hint">9</span> Stop+Restart <span class="click-hint">(2 clicks)</span></button>
   <button class="err-btn" id="btn-cancel" style="display:none;">&#x2715; Cancel</button>
   <span style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+    <button class="err-btn" id="btn-check-counts" title="Show expected tap count derived from current error annotations vs the count from Tap-Align (if run)" style="background:#fef3c7; color:#854d0e; border:2px solid #f59e0b;">🔍 Check Counts</button>
     <button class="err-btn" id="btn-tap-align" title="After marking errors, run Tap-Align: press SPACE on each note onset to record per-note audio times" style="background:#ecfeff; color:#0e7490; border:2px solid #06b6d4;">🎵 Tap-Align</button>
   </span>
 </div>
@@ -472,6 +473,20 @@
     <div class="popup-actions">
       <button id="btn-popup-confirm">Confirm</button>
       <button id="btn-popup-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Counts Modal ─── -->
+<div id="counts-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:200; justify-content:center; align-items:center;">
+  <div id="counts-modal" style="background:white; border-radius:14px; padding:24px 28px; max-width:680px; width:92%; max-height:88vh; overflow:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3); font-size:13px; line-height:1.55;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid #e5e7eb;">
+      <h2 style="font-size:20px; margin:0;">🔍 Tap-Count Sanity Check</h2>
+      <button id="btn-counts-close" type="button" style="font-size:18px; padding:4px 12px; border:1px solid #d1d5db; border-radius:6px; background:white; cursor:pointer;">×</button>
+    </div>
+    <div id="counts-body"></div>
+    <div style="margin-top:18px; padding-top:12px; border-top:1px solid #e5e7eb; text-align:right;">
+      <button id="btn-counts-close-2" type="button" style="padding:8px 24px; background:#065f46; color:white; border:none; border-radius:8px; font-weight:600; font-size:14px; cursor:pointer;">Close</button>
     </div>
   </div>
 </div>
@@ -1401,6 +1416,18 @@ document.getElementById('btn-tap-align').onclick = () => {
   }
 };
 
+// Counts modal
+document.getElementById('btn-check-counts').onclick = showCountsModal;
+document.getElementById('btn-counts-close').onclick = () => {
+  document.getElementById('counts-overlay').style.display = 'none';
+};
+document.getElementById('btn-counts-close-2').onclick = () => {
+  document.getElementById('counts-overlay').style.display = 'none';
+};
+document.getElementById('counts-overlay').onclick = (e) => {
+  if (e.target.id === 'counts-overlay') document.getElementById('counts-overlay').style.display = 'none';
+};
+
 document.getElementById('btn-import').onclick = () => document.getElementById('import-input').click();
 document.getElementById('import-input').onchange = async (e) => {
   const file = e.target.files[0];
@@ -1699,6 +1726,153 @@ function assignTapsToSequence(taps, seq, noteIndex) {
   return onsets;
 }
 
+/**
+ * Compute the expected tap count from the score + error annotations,
+ * with a per-error-type breakdown. Returns:
+ *   { N, expected, breakdown: [{type, ann_id, span, contribution, detail}], errors_by_type: {type: count} }
+ */
+function computeExpectedTapCount(noteIndex, annotations) {
+  const N = noteIndex.length;
+  const breakdown = [];
+  const errorsByType = {};
+  let delta = 0; // net change vs N
+
+  for (const a of annotations) {
+    errorsByType[a.type] = (errorsByType[a.type] || 0) + 1;
+    const lo = Math.min(a.startIdx, a.endIdx);
+    const hi = Math.max(a.startIdx, a.endIdx);
+    const len = hi - lo + 1;
+    let contribution = 0;
+    let detail = '';
+    switch (a.type) {
+      case 'skip':
+        contribution = -len;
+        detail = `removes ${len} note${len === 1 ? '' : 's'} from sequence`;
+        break;
+      case 'repetition': {
+        const k = parseInt(a.extra?.times_played) || 2;
+        contribution = (k - 1) * len;
+        const trigger = a.extra?.trigger || 'clean';
+        detail = `${k}× of ${len} note${len === 1 ? '' : 's'} (${trigger}) → +${contribution}`;
+        break;
+      }
+      case 'stopped_restart': {
+        // startIdx = stop, endIdx = restart (restart is earlier)
+        const stop = a.startIdx, restart = a.endIdx;
+        const replay = stop - restart + 1;
+        contribution = replay > 0 ? replay : 0;
+        detail = `replays notes ${restart}–${stop} → +${contribution}`;
+        break;
+      }
+      case 'note_swap':
+        contribution = 0;
+        detail = `reorders 2 notes, no count change`;
+        break;
+      default:
+        // wrong_note, intonation, pause, tempo_drift, early_late_entry: per-note labels, no cardinality change
+        contribution = 0;
+        detail = `per-note label, no count change`;
+    }
+    delta += contribution;
+    breakdown.push({
+      type: a.type,
+      ann_id: a.id,
+      span: a.startIdx === a.endIdx ? `note ${a.startIdx}` : `notes ${lo}–${hi}`,
+      contribution,
+      detail,
+    });
+  }
+
+  return { N, expected: N + delta, delta, breakdown, errorsByType };
+}
+
+function showCountsModal() {
+  const summary = computeExpectedTapCount(S.noteIndex, S.annotations);
+  const body = document.getElementById('counts-body');
+  if (S.noteIndex.length === 0) {
+    body.innerHTML = '<p style="color:#dc2626;">Load a score first.</p>';
+    document.getElementById('counts-overlay').style.display = 'flex';
+    return;
+  }
+
+  const tapCount = S.taps.length;
+  const seqCount = S.playSequence.length;
+  const ranTapAlign = seqCount > 0;
+  const tapMatchesExpected = ranTapAlign && (tapCount === summary.expected);
+  const seqMatchesExpected = ranTapAlign && (seqCount === summary.expected);
+
+  // Status banner
+  let statusHtml;
+  if (!ranTapAlign) {
+    statusHtml = `<div style="padding:10px 14px; background:#fef3c7; border-left:4px solid #f59e0b; border-radius:6px; margin-bottom:14px;">
+      <strong>Tap-Align not yet run.</strong> The expected count below is derived from your error annotations only.
+    </div>`;
+  } else if (tapMatchesExpected) {
+    statusHtml = `<div style="padding:10px 14px; background:#d1fae5; border-left:4px solid #10b981; border-radius:6px; margin-bottom:14px;">
+      <strong>✓ Counts match.</strong> Tapped ${tapCount} of ${summary.expected} expected.
+    </div>`;
+  } else {
+    const diff = tapCount - summary.expected;
+    statusHtml = `<div style="padding:10px 14px; background:#fee2e2; border-left:4px solid #dc2626; border-radius:6px; margin-bottom:14px;">
+      <strong>⚠ Mismatch.</strong> Tapped ${tapCount}, expected ${summary.expected} (${diff > 0 ? '+' : ''}${diff}).<br>
+      <span style="font-size:12px; color:#7f1d1d;">Likely cause: a missing error annotation (skip / repetition / stopped_restart) or a missed/extra tap. Re-run Tap-Align after fixing.</span>
+    </div>`;
+  }
+
+  // Calculation table
+  let calcRows = `
+    <tr><td style="padding:5px 8px;">Score notes</td><td style="padding:5px 8px; text-align:right; font-family:monospace;">${summary.N}</td></tr>
+  `;
+  if (summary.breakdown.length === 0) {
+    calcRows += `<tr><td colspan="2" style="padding:5px 8px; color:#64748b; font-style:italic;">No error annotations yet.</td></tr>`;
+  } else {
+    for (const b of summary.breakdown) {
+      const sign = b.contribution > 0 ? '+' : (b.contribution < 0 ? '' : '±');
+      const color = b.contribution > 0 ? '#1e40af' : (b.contribution < 0 ? '#7f1d1d' : '#64748b');
+      calcRows += `<tr>
+        <td style="padding:5px 8px;"><strong style="color:${color}">${b.type}</strong> (${b.span}) <span style="color:#64748b; font-size:12px;">— ${b.detail}</span></td>
+        <td style="padding:5px 8px; text-align:right; font-family:monospace; color:${color};">${sign}${b.contribution}</td>
+      </tr>`;
+    }
+  }
+  calcRows += `
+    <tr style="border-top:2px solid #1f2933; font-weight:700;">
+      <td style="padding:8px;">Expected tap count</td>
+      <td style="padding:8px; text-align:right; font-family:monospace;">${summary.expected}</td>
+    </tr>`;
+  if (ranTapAlign) {
+    calcRows += `
+      <tr><td style="padding:5px 8px;">Tap-Align play sequence length</td>
+          <td style="padding:5px 8px; text-align:right; font-family:monospace; color:${seqMatchesExpected ? '#065f46' : '#7f1d1d'};">${seqCount}</td></tr>
+      <tr><td style="padding:5px 8px;">Recorded taps</td>
+          <td style="padding:5px 8px; text-align:right; font-family:monospace; color:${tapMatchesExpected ? '#065f46' : '#7f1d1d'};">${tapCount}</td></tr>`;
+  }
+
+  // Error-type histogram
+  let errorTypeRows = '';
+  for (const [t, c] of Object.entries(summary.errorsByType)) {
+    errorTypeRows += `<tr><td style="padding:4px 8px;">${t}</td><td style="padding:4px 8px; text-align:right; font-family:monospace;">${c}</td></tr>`;
+  }
+
+  body.innerHTML = `
+    ${statusHtml}
+    <h3 style="font-size:15px; margin-top:6px; color:#0e7490;">Calculation</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:6px;">
+      ${calcRows}
+    </table>
+    ${errorTypeRows ? `
+      <h3 style="font-size:15px; margin-top:18px; color:#0e7490;">Annotations by Type</h3>
+      <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:6px;">
+        ${errorTypeRows}
+      </table>` : ''}
+    <p style="margin-top:14px; color:#64748b; font-size:12px;">
+      Formula: <code>expected = N − Σ skip_lengths + Σ (times_played − 1) × rep_length + Σ stopped_restart_replays</code>.
+      Per-note error types (wrong_note, intonation, pause, tempo_drift, early_late_entry) and note_swap don't change the count.
+    </p>
+  `;
+  document.getElementById('counts-overlay').style.display = 'flex';
+}
+
 function startTapAlign() {
   if (S.noteIndex.length === 0) {
     alert('Load a score first.');
@@ -1738,11 +1912,15 @@ function stopTapAlign(commit = true) {
     const got = S.taps.length;
     const expected = S.playSequence.length;
     const diff = got - expected;
-    let msg = `Tap-Align done: ${got} taps recorded for ${expected} expected onsets.`;
-    if (diff !== 0) {
-      msg += ` ⚠ Mismatch ${diff > 0 ? '+' : ''}${diff} — check error annotations or re-tap.`;
+    if (diff === 0) {
+      alert(`✓ Tap-Align done: ${got} taps recorded, matches expected count.`);
+    } else {
+      const sign = diff > 0 ? '+' : '';
+      // Auto-open the Counts modal so the annotator can inspect the breakdown.
+      showCountsModal();
+      // Brief alert won't compete with the modal that just opened.
+      console.warn(`Tap-Align mismatch: ${got} vs ${expected} (${sign}${diff})`);
     }
-    alert(msg);
   }
   showStatus('');
 }
